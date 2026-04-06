@@ -1,0 +1,876 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Virtual Workstation</title>
+    <style>
+      :root {
+        --bg: #09111f;
+        --bg-accent: #10233f;
+        --panel: rgba(9, 17, 31, 0.88);
+        --line: rgba(165, 190, 255, 0.16);
+        --text: #ebf2ff;
+        --muted: #9db1d1;
+        --primary: #80ed99;
+        --primary-strong: #57cc99;
+        --warning: #ffd166;
+        --danger: #ff6b6b;
+        --shadow: 0 24px 60px rgba(0, 0, 0, 0.28);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        font-family: "Segoe UI", sans-serif;
+        color: var(--text);
+        background:
+          radial-gradient(circle at top, rgba(87, 204, 153, 0.18), transparent 30%),
+          linear-gradient(135deg, var(--bg) 0%, var(--bg-accent) 100%);
+        min-height: 100vh;
+      }
+
+      main {
+        width: min(1240px, calc(100vw - 2rem));
+        margin: 0 auto;
+        padding: 3rem 0 4rem;
+      }
+
+      .hero {
+        display: grid;
+        gap: 1.25rem;
+        margin-bottom: 2rem;
+      }
+
+      .hero h1 {
+        margin: 0;
+        font-size: clamp(2.4rem, 4vw, 4.5rem);
+        line-height: 0.95;
+        max-width: 10ch;
+      }
+
+      .hero p {
+        margin: 0;
+        max-width: 62ch;
+        color: var(--muted);
+        font-size: 1.05rem;
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: minmax(320px, 420px) minmax(0, 1fr);
+        gap: 1rem;
+      }
+
+      .stack {
+        display: grid;
+        gap: 1rem;
+      }
+
+      .card {
+        padding: 1.25rem;
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 20px;
+        backdrop-filter: blur(12px);
+        box-shadow: var(--shadow);
+      }
+
+      .auth-toggle {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 0.75rem;
+        margin-bottom: 1rem;
+      }
+
+      label {
+        display: block;
+        margin-bottom: 0.5rem;
+        font-size: 0.9rem;
+        color: var(--muted);
+      }
+
+      input,
+      select,
+      button,
+      textarea {
+        width: 100%;
+        border-radius: 14px;
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.04);
+        color: var(--text);
+        padding: 0.85rem 1rem;
+        font: inherit;
+      }
+
+      button {
+        cursor: pointer;
+        background: linear-gradient(135deg, var(--primary) 0%, var(--primary-strong) 100%);
+        color: #081018;
+        font-weight: 700;
+        border: 0;
+      }
+
+      button[disabled] {
+        cursor: not-allowed;
+        opacity: 0.55;
+      }
+
+      .auth-tab {
+        background: rgba(255, 255, 255, 0.05);
+        color: var(--text);
+        border: 1px solid var(--line);
+      }
+
+      .auth-tab.active {
+        background: linear-gradient(135deg, var(--primary) 0%, var(--primary-strong) 100%);
+        color: #081018;
+      }
+
+      .actions {
+        display: grid;
+        gap: 0.75rem;
+        margin-top: 1rem;
+      }
+
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.5rem;
+        width: fit-content;
+        padding: 0.45rem 0.7rem;
+        border-radius: 999px;
+        background: rgba(128, 237, 153, 0.12);
+        color: var(--primary);
+        font-size: 0.9rem;
+      }
+
+      .profile {
+        display: grid;
+        gap: 0.45rem;
+        padding: 1rem;
+        border-radius: 16px;
+        background: rgba(255, 255, 255, 0.04);
+        border: 1px solid var(--line);
+      }
+
+      .muted {
+        color: var(--muted);
+      }
+
+      .session-list {
+        display: grid;
+        gap: 0.75rem;
+      }
+
+      .session-entry {
+        display: grid;
+        gap: 0.5rem;
+      }
+
+      .session-button {
+        text-align: left;
+        background: rgba(255, 255, 255, 0.05);
+        color: var(--text);
+        border: 1px solid var(--line);
+      }
+
+      .session-controls {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 0.5rem;
+      }
+
+      .session-action {
+        padding: 0.7rem 0.8rem;
+        font-weight: 700;
+      }
+
+      .session-action.open {
+        background: rgba(128, 237, 153, 0.14);
+        color: var(--primary);
+        border: 1px solid rgba(128, 237, 153, 0.25);
+      }
+
+      .session-action.stop {
+        background: rgba(255, 209, 102, 0.16);
+        color: var(--warning);
+        border: 1px solid rgba(255, 209, 102, 0.3);
+      }
+
+      .session-action.remove {
+        background: rgba(255, 107, 107, 0.15);
+        color: var(--danger);
+        border: 1px solid rgba(255, 107, 107, 0.3);
+      }
+
+      .session-button.ready {
+        border-color: rgba(128, 237, 153, 0.4);
+      }
+
+      .session-button.pending {
+        border-color: rgba(255, 209, 102, 0.45);
+      }
+
+      .session-button.error {
+        border-color: rgba(255, 107, 107, 0.55);
+      }
+
+      .session-name {
+        display: block;
+        font-weight: 700;
+      }
+
+      .session-meta {
+        display: block;
+        margin-top: 0.25rem;
+        color: var(--muted);
+        font-size: 0.9rem;
+      }
+
+      .status-chip {
+        display: inline-flex;
+        margin-top: 0.55rem;
+        padding: 0.2rem 0.55rem;
+        border-radius: 999px;
+        font-size: 0.78rem;
+        font-weight: 700;
+        letter-spacing: 0.02em;
+      }
+
+      .status-chip.ready {
+        background: rgba(128, 237, 153, 0.15);
+        color: var(--primary);
+      }
+
+      .status-chip.pending {
+        background: rgba(255, 209, 102, 0.16);
+        color: var(--warning);
+      }
+
+      .status-chip.error {
+        background: rgba(255, 107, 107, 0.15);
+        color: var(--danger);
+      }
+
+      .panel-copy {
+        display: grid;
+        gap: 0.8rem;
+        align-content: start;
+        min-height: 20rem;
+      }
+
+      .empty-state {
+        display: grid;
+        place-items: center;
+        min-height: 12rem;
+        border: 1px dashed var(--line);
+        border-radius: 20px;
+        color: var(--muted);
+        padding: 2rem;
+        text-align: center;
+      }
+
+      .status {
+        min-height: 8rem;
+        white-space: pre-wrap;
+        font-family: "SFMono-Regular", Consolas, monospace;
+      }
+
+      .error {
+        color: var(--danger);
+      }
+
+      @media (max-width: 960px) {
+        .grid {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <section class="hero">
+        <span class="pill">Linux desktop management</span>
+        <h1>Your desktop, launched from one control plane.</h1>
+        <p>
+          Create accounts, launch isolated workstation sessions, and monitor their state from a
+          single management interface. Open a ready session explicitly when you want to enter it.
+        </p>
+      </section>
+
+      <section class="grid">
+        <div class="stack">
+          <article class="card">
+            <h2>1. Account</h2>
+            <div class="auth-toggle">
+              <button id="signInTab" class="auth-tab active" type="button">Sign In</button>
+              <button id="registerTab" class="auth-tab" type="button">Create Account</button>
+            </div>
+            <label for="displayName">Display name</label>
+            <input id="displayName" value="Demo User" />
+            <label for="username">Username</label>
+            <input id="username" value="demo" />
+            <label for="password">Password</label>
+            <input id="password" type="password" value="demo" />
+            <div class="actions">
+              <button id="loginButton">Sign In</button>
+              <button id="registerButton" type="button" style="display: none;">Create Account</button>
+            </div>
+          </article>
+
+          <article class="card">
+            <h2>2. Profile</h2>
+            <div id="profilePanel" class="profile">
+              <div class="muted">No user signed in yet.</div>
+            </div>
+          </article>
+
+          <article class="card">
+            <h2>3. Launch Desktop</h2>
+            <label for="distribution">Distribution</label>
+            <select id="distribution">
+              <option value="">Loading distributions...</option>
+            </select>
+            <label for="desktopEnvironment">Interface</label>
+            <select id="desktopEnvironment">
+              <option value="">Loading interfaces...</option>
+            </select>
+            <label for="instanceSize">Instance size</label>
+            <select id="instanceSize">
+              <option value="">Loading sizes...</option>
+            </select>
+            <div class="actions">
+              <button id="launchButton" disabled>Start New Desktop Session</button>
+            </div>
+          </article>
+
+          <article class="card">
+            <h2>Sessions</h2>
+            <p class="muted">Buttons show live status. A session becomes clickable once it is ready.</p>
+            <div id="sessionList" class="session-list">
+              <div class="empty-state">No sessions yet. Sign in and launch a desktop.</div>
+            </div>
+          </article>
+        </div>
+
+        <article class="card">
+          <h2>Session Launch</h2>
+          <div class="panel-copy">
+            <p class="muted">
+              New sessions move through a short lifecycle before they are usable.
+            </p>
+            <div class="empty-state">
+              Building...
+              <br />
+              Launching...
+              <br />
+              Ready...
+              <br /><br />
+              When a session reaches <strong>Ready</strong>, use the <strong>Open</strong> action.
+            </div>
+          </div>
+        </article>
+      </section>
+
+      <section class="grid" style="margin-top: 1rem;">
+        <article class="card">
+          <h2>Platform State</h2>
+          <textarea id="status" class="status" readonly></textarea>
+        </article>
+      </section>
+    </main>
+
+    <script>
+      const statusEl = document.getElementById("status");
+      const loginButton = document.getElementById("loginButton");
+      const registerButton = document.getElementById("registerButton");
+      const launchButton = document.getElementById("launchButton");
+      const distributionEl = document.getElementById("distribution");
+      const desktopEnvironmentEl = document.getElementById("desktopEnvironment");
+      const instanceSizeEl = document.getElementById("instanceSize");
+      const displayNameEl = document.getElementById("displayName");
+      const sessionListEl = document.getElementById("sessionList");
+      const profilePanelEl = document.getElementById("profilePanel");
+      const signInTabEl = document.getElementById("signInTab");
+      const registerTabEl = document.getElementById("registerTab");
+
+      let token = null;
+      let sessions = [];
+      let authMode = "signin";
+      let pollingHandle = null;
+      let sessionActionInFlight = new Set();
+      let catalog = {
+        distributions: [],
+        interfaces: [],
+        instanceSizes: [],
+        runtimeProfiles: [],
+        policies: {},
+      };
+
+      function setStatus(value, isError) {
+        statusEl.value = value;
+        statusEl.classList.toggle("error", Boolean(isError));
+      }
+
+      function formatSessionState(state) {
+        if (state === "building") {
+          return "Building...";
+        }
+        if (state === "launching") {
+          return "Launching...";
+        }
+        if (state === "ready" || state === "running") {
+          return "Ready";
+        }
+        if (state === "error") {
+          return "Error";
+        }
+        return state || "Unknown";
+      }
+
+      function sessionTone(state) {
+        if (state === "ready" || state === "running") {
+          return "ready";
+        }
+        if (state === "error") {
+          return "error";
+        }
+        return "pending";
+      }
+
+      function setAuthMode(mode) {
+        authMode = mode;
+        signInTabEl.classList.toggle("active", mode === "signin");
+        registerTabEl.classList.toggle("active", mode === "register");
+        loginButton.style.display = mode === "signin" ? "" : "none";
+        registerButton.style.display = mode === "register" ? "" : "none";
+        displayNameEl.style.display = mode === "register" ? "" : "none";
+        document.querySelector('label[for="displayName"]').style.display =
+          mode === "register" ? "" : "none";
+      }
+
+      function setCurrentUser(user) {
+        if (!user) {
+          profilePanelEl.innerHTML = '<div class="muted">No user signed in yet.</div>';
+          return;
+        }
+
+        profilePanelEl.innerHTML = `
+          <strong>${user.profile.displayName}</strong>
+          <span class="muted">@${user.username}</span>
+          <span class="muted">Profile created ${new Date(user.profile.createdAt).toLocaleString()}</span>
+        `;
+      }
+
+      function findRuntimeProfile(distributionId, interfaceId) {
+        return catalog.runtimeProfiles.find(
+          (profile) =>
+            profile.distributionId === distributionId &&
+            profile.interfaceId === interfaceId
+        );
+      }
+
+      function populateDistributionOptions() {
+        distributionEl.innerHTML = catalog.distributions
+          .map(
+            (item) =>
+              `<option value="${item.id}">${item.name}</option>`
+          )
+          .join("");
+
+        distributionEl.value =
+          catalog.policies.defaultDistributionId ||
+          catalog.distributions.find((item) => item.default)?.id ||
+          catalog.distributions[0]?.id ||
+          "";
+      }
+
+      function populateInterfaceOptions() {
+        const selectedDistributionId = distributionEl.value;
+        const allowedInterfaces = catalog.interfaces.filter((item) =>
+          findRuntimeProfile(selectedDistributionId, item.id)
+        );
+
+        desktopEnvironmentEl.innerHTML = allowedInterfaces
+          .map(
+            (item) =>
+              `<option value="${item.id}">${item.name}</option>`
+          )
+          .join("");
+
+        const preferredInterfaceId =
+          catalog.policies.defaultInterfaceId ||
+          allowedInterfaces.find((item) => item.default)?.id ||
+          allowedInterfaces[0]?.id ||
+          "";
+
+        if (!allowedInterfaces.some((item) => item.id === desktopEnvironmentEl.value)) {
+          desktopEnvironmentEl.value = preferredInterfaceId;
+        }
+      }
+
+      function populateInstanceSizeOptions() {
+        instanceSizeEl.innerHTML = catalog.instanceSizes
+          .map((item) => {
+            const resources = item.resources;
+            return `<option value="${item.id}">${item.name} - ${resources.cpus} vCPU / ${resources.memoryMiB} MiB / ${resources.storageGiB} GiB</option>`;
+          })
+          .join("");
+
+        instanceSizeEl.value =
+          catalog.policies.defaultInstanceSizeId ||
+          catalog.instanceSizes.find((item) => item.default)?.id ||
+          catalog.instanceSizes[0]?.id ||
+          "";
+      }
+
+      function renderSessions() {
+        if (sessions.length === 0) {
+          sessionListEl.innerHTML =
+            '<div class="empty-state">No sessions yet. Sign in and launch a desktop.</div>';
+          return;
+        }
+
+        sessionListEl.innerHTML = sessions
+          .map((session) => {
+            const tone = sessionTone(session.state);
+            const canOpen = session.state === "ready" || session.state === "running";
+            const disabled = canOpen ? "" : "disabled";
+            const actionLabel = canOpen ? "Open Session" : formatSessionState(session.state);
+            const openDisabled =
+              sessionActionInFlight.has(`${session.id}:open`) || !canOpen ? "disabled" : "";
+            const stopDisabled =
+              sessionActionInFlight.has(`${session.id}:stop`) ||
+              !["ready", "running", "launching", "building", "error", "stopped"].includes(
+                session.state
+              )
+                ? "disabled"
+                : "";
+            const removeDisabled = sessionActionInFlight.has(`${session.id}:remove`)
+              ? "disabled"
+              : "";
+
+            return `
+              <div class="session-entry">
+                <button class="session-button ${tone}" data-session-id="${session.id}" type="button" ${disabled}>
+                  <span class="session-name">${session.name}</span>
+                  <span class="session-meta">${session.label}</span>
+                  <span class="status-chip ${tone}">${actionLabel}</span>
+                </button>
+                <div class="session-controls">
+                  <button class="session-action open" data-open-session-id="${session.id}" type="button" ${openDisabled}>Open</button>
+                  <button class="session-action stop" data-stop-session-id="${session.id}" type="button" ${stopDisabled}>Stop</button>
+                  <button class="session-action remove" data-remove-session-id="${session.id}" type="button" ${removeDisabled}>Remove</button>
+                </div>
+              </div>
+            `;
+          })
+          .join("");
+
+        for (const button of sessionListEl.querySelectorAll("[data-session-id]")) {
+          button.addEventListener("click", () => {
+            const session = sessions.find((item) => item.id === button.getAttribute("data-session-id"));
+            if (session) {
+              setStatus(
+                [
+                  `${session.name}`,
+                  `Status: ${formatSessionState(session.state)}`,
+                  session.label,
+                  session.url ? `Session URL: ${session.url}` : "Session URL not available yet.",
+                ].join("\n")
+              );
+            }
+          });
+        }
+
+        for (const button of sessionListEl.querySelectorAll("[data-open-session-id]")) {
+          button.addEventListener("click", async () => {
+            const sessionId = button.getAttribute("data-open-session-id");
+            await openSession(sessionId);
+          });
+        }
+
+        for (const button of sessionListEl.querySelectorAll("[data-stop-session-id]")) {
+          button.addEventListener("click", async () => {
+            const sessionId = button.getAttribute("data-stop-session-id");
+            await stopSession(sessionId);
+          });
+        }
+
+        for (const button of sessionListEl.querySelectorAll("[data-remove-session-id]")) {
+          button.addEventListener("click", async () => {
+            const sessionId = button.getAttribute("data-remove-session-id");
+            await removeSession(sessionId);
+          });
+        }
+      }
+
+      function mergeSessions(incomingSessions) {
+        const existingById = new Map(sessions.map((session) => [session.id, session]));
+        sessions = incomingSessions.map((session) => {
+          const existing = existingById.get(session.id);
+          return { ...existing, ...session };
+        });
+
+        renderSessions();
+      }
+
+      async function refreshSessions() {
+        if (!token) {
+          sessions = [];
+          renderSessions();
+          return;
+        }
+
+        const response = await fetch("/api/sessions", {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const payload = await response.json();
+
+        if (!response.ok) {
+          return;
+        }
+
+        mergeSessions(
+          (payload.sessions || []).map((session) => ({
+            id: session.id,
+            name: `${(session.distributionId || "linux").toUpperCase()} / ${(session.interfaceId || session.desktopEnvironment || "session").toUpperCase()}`,
+            label:
+              session.statusDetail ||
+              `${formatSessionState(session.state)} • ${new Date(
+                session.createdAt
+              ).toLocaleString()}`,
+            state: session.state,
+            url: session.connection ? session.connection.url : "",
+          }))
+        );
+      }
+
+      async function openSession(sessionId) {
+        sessionActionInFlight.add(`${sessionId}:open`);
+        renderSessions();
+
+        try {
+          const session = sessions.find((item) => item.id === sessionId);
+          if (
+            session &&
+            (session.state === "ready" || session.state === "running") &&
+            session.url
+          ) {
+            window.open(session.url, "_blank", "noopener,noreferrer");
+            setStatus(`Opened session ${sessionId} in a new tab.`);
+          }
+        } finally {
+          sessionActionInFlight.delete(`${sessionId}:open`);
+          renderSessions();
+        }
+      }
+
+      async function stopSession(sessionId) {
+        sessionActionInFlight.add(`${sessionId}:stop`);
+        renderSessions();
+        setStatus(`Stopping session ${sessionId}...`);
+
+        try {
+          const response = await fetch(`/api/workspaces/${sessionId}/stop`, {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${token}`,
+            },
+          });
+          const payload = await response.json();
+
+          if (!response.ok) {
+            setStatus(JSON.stringify(payload, null, 2), true);
+            return;
+          }
+
+          setStatus(JSON.stringify(payload, null, 2));
+          await refreshSessions();
+        } finally {
+          sessionActionInFlight.delete(`${sessionId}:stop`);
+          renderSessions();
+        }
+      }
+
+      async function removeSession(sessionId) {
+        sessionActionInFlight.add(`${sessionId}:remove`);
+        renderSessions();
+        setStatus(`Removing session ${sessionId}...`);
+
+        try {
+          const response = await fetch(`/api/workspaces/${sessionId}`, {
+            method: "DELETE",
+            headers: {
+              Authorization: `Bearer ${token}`,
+            },
+          });
+          const payload = await response.json();
+
+          if (!response.ok) {
+            setStatus(JSON.stringify(payload, null, 2), true);
+            return;
+          }
+
+          sessions = sessions.filter((session) => session.id !== sessionId);
+          renderSessions();
+          setStatus(JSON.stringify(payload, null, 2));
+          await refreshSessions();
+        } finally {
+          sessionActionInFlight.delete(`${sessionId}:remove`);
+          renderSessions();
+        }
+      }
+
+      function startSessionPolling() {
+        if (pollingHandle) {
+          clearInterval(pollingHandle);
+        }
+
+        pollingHandle = setInterval(() => {
+          refreshSessions().catch(() => {});
+        }, 3000);
+      }
+
+      function stopSessionPolling() {
+        if (pollingHandle) {
+          clearInterval(pollingHandle);
+          pollingHandle = null;
+        }
+      }
+
+      async function loadProfile() {
+        if (!token) {
+          setCurrentUser(null);
+          stopSessionPolling();
+          sessions = [];
+          renderSessions();
+          return;
+        }
+
+        const response = await fetch("/api/me", {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const payload = await response.json();
+
+        if (response.ok) {
+          setCurrentUser(payload.user);
+        }
+
+        await refreshSessions();
+        startSessionPolling();
+      }
+
+      async function loadCatalog() {
+        setStatus("Loading workspace catalog...");
+
+        const response = await fetch("/api/catalog");
+        const payload = await response.json();
+
+        if (!response.ok) {
+          setStatus(JSON.stringify(payload, null, 2), true);
+          distributionEl.innerHTML = '<option value="">Catalog unavailable</option>';
+          desktopEnvironmentEl.innerHTML = '<option value="">Catalog unavailable</option>';
+          instanceSizeEl.innerHTML = '<option value="">Catalog unavailable</option>';
+          return;
+        }
+
+        catalog = payload;
+        populateDistributionOptions();
+        populateInterfaceOptions();
+        populateInstanceSizeOptions();
+
+        setStatus(["Workspace catalog loaded.", "", JSON.stringify(payload, null, 2)].join("\n"));
+      }
+
+      async function authenticate(route) {
+        setStatus(route === "/api/login" ? "Authenticating..." : "Creating account...");
+
+        const response = await fetch(route, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            displayName: displayNameEl.value,
+            username: document.getElementById("username").value,
+            password: document.getElementById("password").value,
+            defaultDesktopEnvironment: desktopEnvironmentEl.value || "xfce",
+          }),
+        });
+
+        const payload = await response.json();
+
+        if (!response.ok) {
+          setStatus(JSON.stringify(payload, null, 2), true);
+          return;
+        }
+
+        token = payload.token;
+        launchButton.disabled = false;
+        await loadProfile();
+        setStatus(JSON.stringify(payload, null, 2));
+      }
+
+      loginButton.addEventListener("click", async () => {
+        await authenticate("/api/login");
+      });
+
+      registerButton.addEventListener("click", async () => {
+        await authenticate("/api/register");
+      });
+
+      launchButton.addEventListener("click", async () => {
+        setStatus("Requesting new desktop session...");
+
+        const response = await fetch("/api/workspaces/launch", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            distributionId: distributionEl.value,
+            interfaceId: desktopEnvironmentEl.value,
+            instanceSizeId: instanceSizeEl.value,
+          }),
+        });
+
+        const payload = await response.json();
+
+        if (!response.ok) {
+          setStatus(JSON.stringify(payload, null, 2), true);
+          return;
+        }
+
+        sessions = [
+          {
+            id: payload.sessionId,
+            name: `${payload.distributionId.toUpperCase()} / ${payload.interfaceId.toUpperCase()}`,
+            label: payload.statusDetail || formatSessionState(payload.state),
+            state: payload.state,
+            url: "",
+            opened: false,
+          },
+          ...sessions,
+        ];
+        renderSessions();
+        refreshSessions().catch(() => {});
+
+        setStatus(["Workspace request accepted.", "", JSON.stringify(payload, null, 2)].join("\n"));
+      });
+
+      signInTabEl.addEventListener("click", () => setAuthMode("signin"));
+      registerTabEl.addEventListener("click", () => setAuthMode("register"));
+      distributionEl.addEventListener("change", () => {
+        populateInterfaceOptions();
+      });
+
+      setAuthMode("signin");
+      renderSessions();
+      loadCatalog();
+    </script>
+  </body>
+</html>

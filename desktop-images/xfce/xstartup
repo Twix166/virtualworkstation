@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -eu
+
+export DESKTOP_SESSION=xfce
+export XDG_CURRENT_DESKTOP=XFCE
+export XDG_SESSION_DESKTOP=xfce
+
+unset SESSION_MANAGER
+unset DBUS_SESSION_BUS_ADDRESS
+
+exec dbus-launch --exit-with-session startxfce4
+

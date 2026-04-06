@@ -1,0 +1,14 @@
+{
+  "name": "virtualworkstation",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "services/*"
+  ],
+  "scripts": {
+    "start:gateway": "node services/api-gateway/src/server.js",
+    "start:auth": "node services/auth-service/src/server.js",
+    "start:workspace": "node services/workspace-service/src/server.js"
+  }
+}
+

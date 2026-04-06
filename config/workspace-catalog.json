@@ -1,0 +1,71 @@
+{
+  "version": 2,
+  "distributions": [
+    {
+      "id": "ubuntu-24.04",
+      "name": "Ubuntu 24.04 LTS",
+      "family": "ubuntu",
+      "baseImage": "virtualworkstation/ubuntu-24.04-base:local",
+      "default": true,
+      "tags": ["lts", "general-purpose"]
+    }
+  ],
+  "interfaces": [
+    {
+      "id": "xfce",
+      "name": "XFCE Desktop",
+      "kind": "desktop",
+      "protocol": "novnc",
+      "requiresDisplay": true,
+      "default": true
+    }
+  ],
+  "instanceSizes": [
+    {
+      "id": "small",
+      "name": "Small",
+      "resources": {
+        "cpus": 2,
+        "memoryMiB": 4096,
+        "storageGiB": 20
+      },
+      "default": true
+    },
+    {
+      "id": "medium",
+      "name": "Medium",
+      "resources": {
+        "cpus": 4,
+        "memoryMiB": 8192,
+        "storageGiB": 40
+      }
+    },
+    {
+      "id": "large",
+      "name": "Large",
+      "resources": {
+        "cpus": 8,
+        "memoryMiB": 16384,
+        "storageGiB": 80
+      }
+    }
+  ],
+  "runtimeProfiles": [
+    {
+      "id": "ubuntu-24.04-xfce",
+      "distributionId": "ubuntu-24.04",
+      "interfaceId": "xfce",
+      "image": "virtualworkstation/desktop-xfce:local",
+      "launch": {
+        "mode": "container",
+        "exposedPort": 6080,
+        "connectionPath": "/vnc.html?autoconnect=true&resize=remote"
+      }
+    }
+  ],
+  "policies": {
+    "defaultDistributionId": "ubuntu-24.04",
+    "defaultInterfaceId": "xfce",
+    "defaultInstanceSizeId": "small"
+  }
+}
