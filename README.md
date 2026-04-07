@@ -61,6 +61,7 @@ The installer:
 - downloads the repository into `INSTALL_DIR` (`$HOME/virtualworkstation` by default)
 - creates or updates `.env`
 - checks Docker and Docker Compose availability
+- checks whether the requested control-plane port is already in use and prompts for an alternative when needed
 - runs `docker compose up -d --build`
 
 Then open:
