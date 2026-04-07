@@ -11,6 +11,7 @@ API_GATEWAY_PORT_VALUE="${API_GATEWAY_PORT:-8080}"
 AUTH_TOKEN_SECRET_VALUE="${AUTH_TOKEN_SECRET:-virtualworkstation-dev-secret}"
 START_STACK="${START_STACK:-1}"
 SKIP_DOCKER_CHECK="${SKIP_DOCKER_CHECK:-0}"
+INSTALL_MODE="${INSTALL_MODE:-auto}"
 TMP_DIR=""
 COMPOSE_CMD=()
 
@@ -21,6 +22,13 @@ log() {
 fail() {
   printf '[install] ERROR: %s\n' "$*" >&2
   exit 1
+}
+
+run_in_install_dir() {
+  (
+    cd "$INSTALL_DIR"
+    "$@"
+  )
 }
 
 need_command() {
@@ -215,10 +223,7 @@ start_stack() {
   while true; do
     log "Starting Docker services"
 
-    if compose_output="$(
-      cd "$INSTALL_DIR" &&
-        "${COMPOSE_CMD[@]}" up -d --build 2>&1
-    )"; then
+    if compose_output="$(run_in_install_dir "${COMPOSE_CMD[@]}" up -d --build 2>&1)"; then
       printf '%s\n' "$compose_output"
       return 0
     fi
@@ -244,6 +249,106 @@ upsert_env_file() {
   else
     printf '%s=%s\n' "$key" "$value" >>"$file_path"
   fi
+}
+
+existing_install_dir_present() {
+  [ -f "$INSTALL_DIR/docker-compose.yml" ]
+}
+
+existing_virtualworkstation_containers_present() {
+  docker ps -a --format '{{.Names}}' | grep -Eq '^(virtualworkstation|vws-)'
+}
+
+cleanup_leftover_session_containers() {
+  local session_ids
+
+  session_ids="$(
+    docker ps -a --format '{{.Names}}' | grep -E '^vws-' || true
+  )"
+
+  [ -n "$session_ids" ] || return 0
+
+  log "Removing leftover workstation session containers"
+  printf '%s\n' "$session_ids" | xargs -r docker rm -f >/dev/null
+}
+
+repair_existing_install() {
+  if existing_install_dir_present; then
+    log "Repairing existing install in $INSTALL_DIR"
+    run_in_install_dir "${COMPOSE_CMD[@]}" down --remove-orphans >/dev/null 2>&1 || true
+  else
+    log "Repairing existing Docker resources"
+  fi
+
+  cleanup_leftover_session_containers
+}
+
+clean_existing_install() {
+  if existing_install_dir_present; then
+    log "Removing existing install state in $INSTALL_DIR"
+    run_in_install_dir "${COMPOSE_CMD[@]}" down --volumes --remove-orphans >/dev/null 2>&1 || true
+  fi
+
+  cleanup_leftover_session_containers
+
+  docker ps -a --format '{{.Names}}' | grep -E '^virtualworkstation' | xargs -r docker rm -f >/dev/null 2>&1 || true
+  docker volume ls --format '{{.Name}}' | grep '^virtualworkstation_' | xargs -r docker volume rm >/dev/null 2>&1 || true
+}
+
+choose_install_mode() {
+  if [ "$INSTALL_MODE" != "auto" ]; then
+    printf '%s\n' "$INSTALL_MODE"
+    return
+  fi
+
+  if ! existing_install_dir_present && ! existing_virtualworkstation_containers_present; then
+    printf 'reuse\n'
+    return
+  fi
+
+  if [ -t 0 ] && [ -t 1 ]; then
+    printf '\n'
+    printf 'An existing Virtual Workstation install or leftover Docker state was detected.\n'
+    printf 'Choose how to proceed:\n'
+    printf '  1) Reuse existing install and start/update services\n'
+    printf '  2) Repair existing install by stopping compose services and removing leftover session containers\n'
+    printf '  3) Clean reinstall by removing Virtual Workstation containers and volumes first\n'
+    printf '\n'
+
+    while true; do
+      printf 'Selection [1]: '
+      read -r selection
+      case "${selection:-1}" in
+        1) printf 'reuse\n'; return ;;
+        2) printf 'repair\n'; return ;;
+        3) printf 'clean\n'; return ;;
+      esac
+      printf 'Invalid selection.\n'
+    done
+  fi
+
+  printf 'repair\n'
+}
+
+prepare_existing_install() {
+  local selected_mode="$1"
+
+  case "$selected_mode" in
+    reuse)
+      if existing_install_dir_present || existing_virtualworkstation_containers_present; then
+        log "Reusing existing install state"
+      fi
+      ;;
+    repair)
+      repair_existing_install
+      ;;
+    clean)
+      clean_existing_install
+      ;;
+    *)
+      fail "Unknown install mode: $selected_mode"
+      ;;
+  esac
 }
 
 download_source_tree() {
@@ -280,6 +385,8 @@ initialize_env_file() {
 }
 
 main() {
+  local selected_mode
+
   need_command curl
   need_command tar
   need_command cp
@@ -293,8 +400,13 @@ main() {
     detect_compose_cmd
   fi
 
+  selected_mode="$(choose_install_mode)"
   TMP_DIR="$(mktemp -d)"
   trap 'rm -rf "${TMP_DIR:-}"' EXIT
+
+  if [ "$SKIP_DOCKER_CHECK" != "1" ]; then
+    prepare_existing_install "$selected_mode"
+  fi
 
   download_source_tree "$TMP_DIR"
   resolve_gateway_port
