@@ -168,6 +168,49 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
+  if (req.method === "PATCH" && req.url.startsWith("/v1/users/")) {
+    const parts = req.url.split("/").filter(Boolean);
+    const userId = parts[2];
+    const resource = parts[3];
+
+    if (resource !== "profile") {
+      json(res, 404, { error: "Not found" });
+      return;
+    }
+
+    const body = await readRequestBody(req);
+    const request = body ? JSON.parse(body) : {};
+    const database = readDatabase();
+    const user = database.users.find((entry) => entry.id === userId);
+
+    if (!user) {
+      json(res, 404, { error: "User not found" });
+      return;
+    }
+
+    if (request.displayName !== undefined) {
+      const nextDisplayName = String(request.displayName || "").trim();
+
+      if (!nextDisplayName) {
+        json(res, 400, { error: "displayName is required" });
+        return;
+      }
+
+      user.profile.displayName = nextDisplayName;
+    }
+
+    if (request.preferences !== undefined) {
+      user.profile.preferences = {
+        ...(user.profile.preferences || {}),
+        ...(request.preferences || {}),
+      };
+    }
+
+    writeDatabase(database);
+    json(res, 200, { user: sanitizeUser(user) });
+    return;
+  }
+
   if (req.method === "POST" && req.url === "/v1/sessions") {
     const body = await readRequestBody(req);
     const request = body ? JSON.parse(body) : {};
@@ -202,6 +245,15 @@ const server = http.createServer(async (req, res) => {
     database.sessions.push(session);
     writeDatabase(database);
     json(res, 201, { session });
+    return;
+  }
+
+  if (req.method === "GET" && req.url === "/v1/sessions") {
+    const database = readDatabase();
+    const sessions = database.sessions
+      .slice()
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+    json(res, 200, { sessions });
     return;
   }
 

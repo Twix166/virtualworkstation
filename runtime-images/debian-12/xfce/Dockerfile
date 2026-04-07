@@ -34,4 +34,3 @@ USER desktop
 EXPOSE 6080 5901
 
 CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]
-

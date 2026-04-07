@@ -113,6 +113,13 @@ Suggested replacement for `config/workspace-catalog.json`:
       "distributionId": "ubuntu-24.04",
       "interfaceId": "xfce",
       "image": "virtualworkstation/ubuntu-24.04-xfce:local",
+      "imageSource": {
+        "pullReferences": ["ghcr.io/example/virtualworkstation/ubuntu-24.04-xfce:latest"],
+        "build": {
+          "context": ".",
+          "dockerfile": "runtime-images/ubuntu-24.04/xfce/Dockerfile"
+        }
+      },
       "launch": {
         "mode": "container",
         "exposedPort": 6080,
@@ -124,10 +131,17 @@ Suggested replacement for `config/workspace-catalog.json`:
       "distributionId": "ubuntu-24.04",
       "interfaceId": "cli",
       "image": "virtualworkstation/ubuntu-24.04-cli:local",
+      "imageSource": {
+        "pullReferences": ["ghcr.io/example/virtualworkstation/ubuntu-24.04-cli:latest"],
+        "build": {
+          "context": ".",
+          "dockerfile": "runtime-images/ubuntu-24.04/cli/Dockerfile"
+        }
+      },
       "launch": {
         "mode": "container",
-        "exposedPort": 3000,
-        "connectionPath": "/terminal"
+        "exposedPort": 7681,
+        "connectionPath": "/"
       }
     }
   ],
@@ -165,7 +179,7 @@ Examples:
 Important distinction:
 
 - Desktop interfaces produce a graphical session and typically use `novnc`
-- CLI interfaces produce a terminal-only session and should use a terminal protocol such as `ttyd` or `wetty`
+- CLI interfaces produce a terminal-only session and should use a terminal protocol such as `shellinabox`, `ttyd`, or `wetty`
 
 ### `instanceSizes`
 
@@ -189,6 +203,7 @@ A profile should answer:
 
 - Is this combination supported?
 - Which image should be launched?
+- Should that image be pulled from a registry, built locally, or both?
 - Which protocol should be used?
 - Which exposed port/path produces the user connection?
 
@@ -369,4 +384,3 @@ The current runtime backend is container-only and stateless. That means:
 - true hibernation is not credible yet without a different backend or a stateful snapshot mechanism
 
 That should be treated as a platform constraint, not hidden behind UI promises.
-

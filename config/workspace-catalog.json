@@ -1,13 +1,27 @@
 {
-  "version": 2,
+  "version": 3,
   "distributions": [
+    {
+      "id": "xubuntu-24.04",
+      "name": "Xubuntu 24.04 LTS",
+      "family": "ubuntu",
+      "baseImage": "ubuntu:24.04",
+      "default": true,
+      "tags": ["lts", "xfce", "desktop"]
+    },
     {
       "id": "ubuntu-24.04",
       "name": "Ubuntu 24.04 LTS",
       "family": "ubuntu",
-      "baseImage": "virtualworkstation/ubuntu-24.04-base:local",
-      "default": true,
-      "tags": ["lts", "general-purpose"]
+      "baseImage": "ubuntu:24.04",
+      "tags": ["lts", "gnome", "general-purpose"]
+    },
+    {
+      "id": "debian-12",
+      "name": "Debian 12",
+      "family": "debian",
+      "baseImage": "debian:bookworm-slim",
+      "tags": ["stable", "minimal"]
     }
   ],
   "interfaces": [
@@ -18,6 +32,20 @@
       "protocol": "novnc",
       "requiresDisplay": true,
       "default": true
+    },
+    {
+      "id": "gnome",
+      "name": "GNOME Desktop",
+      "kind": "desktop",
+      "protocol": "novnc",
+      "requiresDisplay": true
+    },
+    {
+      "id": "cli",
+      "name": "Command Line",
+      "kind": "terminal",
+      "protocol": "shellinabox",
+      "requiresDisplay": false
     }
   ],
   "instanceSizes": [
@@ -52,19 +80,113 @@
   ],
   "runtimeProfiles": [
     {
-      "id": "ubuntu-24.04-xfce",
-      "distributionId": "ubuntu-24.04",
+      "id": "xubuntu-24.04-xfce",
+      "distributionId": "xubuntu-24.04",
       "interfaceId": "xfce",
-      "image": "virtualworkstation/desktop-xfce:local",
+      "image": "virtualworkstation/runtime-xubuntu-24.04-xfce:local",
+      "imageSource": {
+        "pullReferences": [
+          "ghcr.io/twix166/virtualworkstation/runtime-xubuntu-24.04-xfce:latest"
+        ],
+        "build": {
+          "context": ".",
+          "dockerfile": "runtime-images/xubuntu-24.04/xfce/Dockerfile",
+          "cacheKey": "2026-04-07-xubuntu-xfce-v1"
+        }
+      },
       "launch": {
         "mode": "container",
         "exposedPort": 6080,
         "connectionPath": "/vnc.html?autoconnect=true&resize=remote"
       }
+    },
+    {
+      "id": "ubuntu-24.04-gnome",
+      "distributionId": "ubuntu-24.04",
+      "interfaceId": "gnome",
+      "image": "virtualworkstation/runtime-ubuntu-24.04-gnome:local",
+      "imageSource": {
+        "pullReferences": [
+          "ghcr.io/twix166/virtualworkstation/runtime-ubuntu-24.04-gnome:latest"
+        ],
+        "build": {
+          "context": ".",
+          "dockerfile": "runtime-images/ubuntu-24.04/gnome/Dockerfile",
+          "cacheKey": "2026-04-07-ubuntu-gnome-v3"
+        }
+      },
+      "launch": {
+        "mode": "container",
+        "exposedPort": 6080,
+        "connectionPath": "/vnc.html?autoconnect=true&resize=remote"
+      }
+    },
+    {
+      "id": "ubuntu-24.04-cli",
+      "distributionId": "ubuntu-24.04",
+      "interfaceId": "cli",
+      "image": "virtualworkstation/runtime-ubuntu-24.04-cli-shell:local",
+      "imageSource": {
+        "pullReferences": [
+          "ghcr.io/twix166/virtualworkstation/runtime-ubuntu-24.04-cli-shell:latest"
+        ],
+        "build": {
+          "context": ".",
+          "dockerfile": "runtime-images/ubuntu-24.04/cli/Dockerfile",
+          "cacheKey": "2026-04-07-ubuntu-cli-v1"
+        }
+      },
+      "launch": {
+        "mode": "container",
+        "exposedPort": 7681,
+        "connectionPath": "/"
+      }
+    },
+    {
+      "id": "debian-12-xfce",
+      "distributionId": "debian-12",
+      "interfaceId": "xfce",
+      "image": "virtualworkstation/runtime-debian-12-xfce:local",
+      "imageSource": {
+        "pullReferences": [
+          "ghcr.io/twix166/virtualworkstation/runtime-debian-12-xfce:latest"
+        ],
+        "build": {
+          "context": ".",
+          "dockerfile": "runtime-images/debian-12/xfce/Dockerfile",
+          "cacheKey": "2026-04-07-debian-xfce-v1"
+        }
+      },
+      "launch": {
+        "mode": "container",
+        "exposedPort": 6080,
+        "connectionPath": "/vnc.html?autoconnect=true&resize=remote"
+      }
+    },
+    {
+      "id": "debian-12-cli",
+      "distributionId": "debian-12",
+      "interfaceId": "cli",
+      "image": "virtualworkstation/runtime-debian-12-cli-shell:local",
+      "imageSource": {
+        "pullReferences": [
+          "ghcr.io/twix166/virtualworkstation/runtime-debian-12-cli-shell:latest"
+        ],
+        "build": {
+          "context": ".",
+          "dockerfile": "runtime-images/debian-12/cli/Dockerfile",
+          "cacheKey": "2026-04-07-debian-cli-v1"
+        }
+      },
+      "launch": {
+        "mode": "container",
+        "exposedPort": 7681,
+        "connectionPath": "/"
+      }
     }
   ],
   "policies": {
-    "defaultDistributionId": "ubuntu-24.04",
+    "defaultDistributionId": "xubuntu-24.04",
     "defaultInterfaceId": "xfce",
     "defaultInstanceSizeId": "small"
   }

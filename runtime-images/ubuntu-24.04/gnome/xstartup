@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+set -eu
+
+export XDG_CURRENT_DESKTOP=ubuntu:GNOME
+export XDG_SESSION_DESKTOP=ubuntu
+export DESKTOP_SESSION=ubuntu
+export GNOME_SHELL_SESSION_MODE=ubuntu
+export XDG_RUNTIME_DIR=/run/user/1001
+
+unset SESSION_MANAGER
+unset DBUS_SESSION_BUS_ADDRESS
+
+mkdir -p "${XDG_RUNTIME_DIR}"
+
+exec dbus-run-session gnome-session --session=ubuntu

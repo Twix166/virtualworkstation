@@ -8,9 +8,6 @@ const dataServiceUrl = process.env.DATA_SERVICE_URL || "http://localhost:8083";
 const workspaceServiceUrl =
   process.env.WORKSPACE_SERVICE_URL || "http://localhost:8082";
 const publicBaseUrl = process.env.PUBLIC_BASE_URL || "http://localhost:8080";
-const defaultDesktopUrl =
-  process.env.DEFAULT_DESKTOP_URL ||
-  "http://localhost:6081/vnc.html?autoconnect=true&resize=remote";
 const clientDir = path.resolve(__dirname, "../../../web/client");
 
 function json(res, statusCode, payload) {
@@ -198,6 +195,40 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === "PATCH" && req.url === "/api/me") {
+    const authorization = req.headers.authorization || "";
+    const payload = authorization.startsWith("Bearer ")
+      ? JSON.parse(
+          Buffer.from(
+            authorization.slice("Bearer ".length).split(".")[0],
+            "base64url"
+          ).toString("utf8")
+        )
+      : null;
+
+    if (!payload || !payload.sub) {
+      json(res, 401, { error: "Missing bearer token" });
+      return;
+    }
+
+    try {
+      const body = await readRequestBody(req);
+      const response = await forwardJson(
+        dataServiceUrl,
+        `/v1/users/${payload.sub}/profile`,
+        "PATCH",
+        body
+      );
+      json(res, response.statusCode, response.payload);
+    } catch (error) {
+      json(res, 502, {
+        error: "Data service unavailable",
+        detail: error.message,
+      });
+    }
+    return;
+  }
+
   if (req.method === "GET" && req.url === "/api/sessions") {
     const authorization = req.headers.authorization || "";
     const payload = authorization.startsWith("Bearer ")
@@ -230,12 +261,90 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === "GET" && req.url === "/api/admin/sessions") {
+    try {
+      const response = await forwardJson(
+        workspaceServiceUrl,
+        "/v1/admin/sessions",
+        "GET",
+        "",
+        { Authorization: req.headers.authorization || "" }
+      );
+      json(res, response.statusCode, response.payload);
+    } catch (error) {
+      json(res, 502, {
+        error: "Workspace service unavailable",
+        detail: error.message,
+      });
+    }
+    return;
+  }
+
   if (req.method === "POST" && req.url === "/api/workspaces/launch") {
     try {
       const body = await readRequestBody(req);
       const response = await forwardJson(
         workspaceServiceUrl,
         "/v1/workspaces/launch",
+        "POST",
+        body,
+        { Authorization: req.headers.authorization || "" }
+      );
+      json(res, response.statusCode, response.payload);
+    } catch (error) {
+      json(res, 502, {
+        error: "Workspace service unavailable",
+        detail: error.message,
+      });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && req.url === "/api/admin/cleanup") {
+    try {
+      const response = await forwardJson(
+        workspaceServiceUrl,
+        "/v1/admin/cleanup",
+        "POST",
+        "",
+        { Authorization: req.headers.authorization || "" }
+      );
+      json(res, response.statusCode, response.payload);
+    } catch (error) {
+      json(res, 502, {
+        error: "Workspace service unavailable",
+        detail: error.message,
+      });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && req.url === "/api/admin/sessions/stop-all") {
+    try {
+      const body = await readRequestBody(req);
+      const response = await forwardJson(
+        workspaceServiceUrl,
+        "/v1/admin/sessions/stop-all",
+        "POST",
+        body,
+        { Authorization: req.headers.authorization || "" }
+      );
+      json(res, response.statusCode, response.payload);
+    } catch (error) {
+      json(res, 502, {
+        error: "Workspace service unavailable",
+        detail: error.message,
+      });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && req.url === "/api/admin/sessions/remove-inactive") {
+    try {
+      const body = await readRequestBody(req);
+      const response = await forwardJson(
+        workspaceServiceUrl,
+        "/v1/admin/sessions/remove-inactive",
         "POST",
         body,
         { Authorization: req.headers.authorization || "" }
@@ -302,7 +411,7 @@ const server = http.createServer(async (req, res) => {
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Desktop Session ${sessionId}</title>
+    <title>Session ${sessionId}</title>
     <style>
       body {
         margin: 0;
@@ -323,9 +432,9 @@ const server = http.createServer(async (req, res) => {
   </head>
   <body>
     <main>
-      <h1>Linux Desktop Session</h1>
+      <h1>Linux Session</h1>
       <p>Session <strong>${sessionId}</strong> was created successfully.</p>
-      <p>Open the browser-streamed desktop at <a href="${defaultDesktopUrl}">${defaultDesktopUrl}</a>.</p>
+      <p>Return to the management interface at <a href="${publicBaseUrl}">${publicBaseUrl}</a> to open the session once it is ready.</p>
     </main>
   </body>
 </html>`;

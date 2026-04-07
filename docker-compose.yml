@@ -9,7 +9,6 @@ services:
       DATA_SERVICE_URL: http://data-service:8083
       WORKSPACE_SERVICE_URL: http://workspace-service:8082
       PUBLIC_BASE_URL: http://localhost:${API_GATEWAY_PORT:-8080}
-      DEFAULT_DESKTOP_URL: http://localhost:${DESKTOP_XFCE_PORT:-6081}/vnc.html?autoconnect=true&resize=remote
     ports:
       - "${API_GATEWAY_PORT:-8080}:8080"
     depends_on:
@@ -70,15 +69,14 @@ services:
       AUTH_TOKEN_SECRET: ${AUTH_TOKEN_SECRET:-virtualworkstation-dev-secret}
       WORKSPACE_CATALOG_PATH: /app/config/workspace-catalog.json
       PUBLIC_BASE_URL: http://localhost:${API_GATEWAY_PORT:-8080}
+      RUNTIME_SOURCE_ROOT: /workspace-src
       DOCKER_HOST: unix:///var/run/docker.sock
-      DESKTOP_IMAGE: virtualworkstation/desktop-xfce:local
     volumes:
+      - .:/workspace-src:ro
       - ./config/workspace-catalog.json:/app/config/workspace-catalog.json:ro
       - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
       data-service:
-        condition: service_healthy
-      desktop-xfce:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8082/health').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
@@ -86,25 +84,6 @@ services:
       timeout: 5s
       retries: 5
       start_period: 5s
-
-  desktop-xfce:
-    build:
-      context: .
-      dockerfile: desktop-images/xfce/Dockerfile
-    image: virtualworkstation/desktop-xfce:local
-    shm_size: "1gb"
-    environment:
-      DISPLAY: :1
-      VNC_RESOLUTION: 1600x900
-      VNC_COL_DEPTH: "24"
-    ports:
-      - "${DESKTOP_XFCE_PORT:-6081}:6080"
-    healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:6080/vnc.html"]
-      interval: 20s
-      timeout: 5s
-      retries: 5
-      start_period: 25s
 
 volumes:
   platform-data:

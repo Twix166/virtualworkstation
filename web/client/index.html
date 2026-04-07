@@ -6,111 +6,51 @@
     <title>Virtual Workstation</title>
     <style>
       :root {
-        --bg: #09111f;
-        --bg-accent: #10233f;
-        --panel: rgba(9, 17, 31, 0.88);
-        --line: rgba(165, 190, 255, 0.16);
-        --text: #ebf2ff;
-        --muted: #9db1d1;
-        --primary: #80ed99;
+        --bg: #07111e;
+        --bg-soft: #10233f;
+        --panel: rgba(7, 17, 30, 0.84);
+        --panel-strong: rgba(9, 20, 36, 0.94);
+        --panel-lite: rgba(255, 255, 255, 0.04);
+        --line: rgba(171, 194, 255, 0.16);
+        --line-strong: rgba(171, 194, 255, 0.24);
+        --text: #edf4ff;
+        --muted: #93a8c9;
+        --primary: #8ef0a9;
         --primary-strong: #57cc99;
         --warning: #ffd166;
         --danger: #ff6b6b;
-        --shadow: 0 24px 60px rgba(0, 0, 0, 0.28);
+        --shadow: 0 24px 60px rgba(0, 0, 0, 0.35);
+        --radius: 24px;
       }
 
       * {
         box-sizing: border-box;
       }
 
+      html,
       body {
         margin: 0;
+        min-height: 100%;
+      }
+
+      body {
         font-family: "Segoe UI", sans-serif;
         color: var(--text);
         background:
-          radial-gradient(circle at top, rgba(87, 204, 153, 0.18), transparent 30%),
-          linear-gradient(135deg, var(--bg) 0%, var(--bg-accent) 100%);
-        min-height: 100vh;
+          radial-gradient(circle at top left, rgba(87, 204, 153, 0.16), transparent 24%),
+          radial-gradient(circle at top right, rgba(77, 143, 255, 0.14), transparent 28%),
+          linear-gradient(135deg, #08111d 0%, #132845 100%);
       }
 
-      main {
-        width: min(1240px, calc(100vw - 2rem));
-        margin: 0 auto;
-        padding: 3rem 0 4rem;
-      }
-
-      .hero {
-        display: grid;
-        gap: 1.25rem;
-        margin-bottom: 2rem;
-      }
-
-      .hero h1 {
-        margin: 0;
-        font-size: clamp(2.4rem, 4vw, 4.5rem);
-        line-height: 0.95;
-        max-width: 10ch;
-      }
-
-      .hero p {
-        margin: 0;
-        max-width: 62ch;
-        color: var(--muted);
-        font-size: 1.05rem;
-      }
-
-      .grid {
-        display: grid;
-        grid-template-columns: minmax(320px, 420px) minmax(0, 1fr);
-        gap: 1rem;
-      }
-
-      .stack {
-        display: grid;
-        gap: 1rem;
-      }
-
-      .card {
-        padding: 1.25rem;
-        background: var(--panel);
-        border: 1px solid var(--line);
-        border-radius: 20px;
-        backdrop-filter: blur(12px);
-        box-shadow: var(--shadow);
-      }
-
-      .auth-toggle {
-        display: grid;
-        grid-template-columns: repeat(2, 1fr);
-        gap: 0.75rem;
-        margin-bottom: 1rem;
-      }
-
-      label {
-        display: block;
-        margin-bottom: 0.5rem;
-        font-size: 0.9rem;
-        color: var(--muted);
-      }
-
+      button,
       input,
       select,
-      button,
       textarea {
-        width: 100%;
-        border-radius: 14px;
-        border: 1px solid var(--line);
-        background: rgba(255, 255, 255, 0.04);
-        color: var(--text);
-        padding: 0.85rem 1rem;
         font: inherit;
       }
 
       button {
         cursor: pointer;
-        background: linear-gradient(135deg, var(--primary) 0%, var(--primary-strong) 100%);
-        color: #081018;
-        font-weight: 700;
         border: 0;
       }
 
@@ -119,10 +59,151 @@
         opacity: 0.55;
       }
 
+      input,
+      select,
+      textarea {
+        width: 100%;
+        border-radius: 16px;
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.04);
+        color: var(--text);
+        padding: 0.9rem 1rem;
+      }
+
+      textarea {
+        resize: vertical;
+      }
+
+      label {
+        display: block;
+        margin-bottom: 0.45rem;
+        color: var(--muted);
+        font-size: 0.9rem;
+      }
+
+      .hidden {
+        display: none !important;
+      }
+
+      .auth-shell {
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        padding: 2rem;
+      }
+
+      .auth-layout {
+        width: min(1120px, 100%);
+        display: grid;
+        grid-template-columns: minmax(0, 1.2fr) minmax(360px, 460px);
+        gap: 1.25rem;
+        align-items: stretch;
+      }
+
+      .auth-story,
+      .auth-card,
+      .app-card,
+      .status-card {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        backdrop-filter: blur(14px);
+        box-shadow: var(--shadow);
+      }
+
+      .auth-story {
+        padding: 2rem;
+        display: grid;
+        align-content: space-between;
+        gap: 2rem;
+        min-height: 42rem;
+      }
+
+      .eyebrow {
+        display: inline-flex;
+        align-items: center;
+        width: fit-content;
+        border-radius: 999px;
+        padding: 0.45rem 0.75rem;
+        background: rgba(142, 240, 169, 0.12);
+        color: var(--primary);
+        font-size: 0.86rem;
+        font-weight: 700;
+        letter-spacing: 0.02em;
+      }
+
+      .auth-story h1 {
+        margin: 0.9rem 0 0;
+        font-size: clamp(3rem, 5vw, 5rem);
+        line-height: 0.92;
+        max-width: 9ch;
+      }
+
+      .auth-story p {
+        margin: 0;
+        max-width: 56ch;
+        color: var(--muted);
+        font-size: 1.02rem;
+      }
+
+      .story-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 0.9rem;
+      }
+
+      .story-card {
+        padding: 1rem;
+        border-radius: 18px;
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.04);
+      }
+
+      .story-card strong {
+        display: block;
+        margin-bottom: 0.45rem;
+      }
+
+      .story-card span {
+        color: var(--muted);
+        font-size: 0.92rem;
+      }
+
+      .auth-card {
+        padding: 1.5rem;
+        display: grid;
+        gap: 1.2rem;
+        align-content: start;
+      }
+
+      .auth-card-header {
+        display: grid;
+        gap: 0.5rem;
+      }
+
+      .auth-card-header h2 {
+        margin: 0;
+        font-size: 1.55rem;
+      }
+
+      .auth-card-header p {
+        margin: 0;
+        color: var(--muted);
+      }
+
+      .auth-toggle {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 0.7rem;
+      }
+
       .auth-tab {
-        background: rgba(255, 255, 255, 0.05);
+        border-radius: 16px;
+        padding: 0.85rem 1rem;
+        background: rgba(255, 255, 255, 0.04);
         color: var(--text);
         border: 1px solid var(--line);
+        font-weight: 700;
       }
 
       .auth-tab.active {
@@ -130,93 +211,291 @@
         color: #081018;
       }
 
-      .actions {
+      .field-grid {
         display: grid;
-        gap: 0.75rem;
-        margin-top: 1rem;
+        gap: 1rem;
       }
 
-      .pill {
-        display: inline-flex;
-        align-items: center;
-        gap: 0.5rem;
-        width: fit-content;
-        padding: 0.45rem 0.7rem;
-        border-radius: 999px;
-        background: rgba(128, 237, 153, 0.12);
-        color: var(--primary);
-        font-size: 0.9rem;
-      }
-
-      .profile {
-        display: grid;
-        gap: 0.45rem;
-        padding: 1rem;
+      .primary-button,
+      .secondary-button,
+      .danger-button,
+      .ghost-button {
         border-radius: 16px;
-        background: rgba(255, 255, 255, 0.04);
-        border: 1px solid var(--line);
+        padding: 0.9rem 1rem;
+        font-weight: 700;
       }
 
-      .muted {
-        color: var(--muted);
+      .primary-button {
+        background: linear-gradient(135deg, var(--primary) 0%, var(--primary-strong) 100%);
+        color: #081018;
       }
 
-      .session-list {
-        display: grid;
-        gap: 0.75rem;
-      }
-
-      .session-entry {
-        display: grid;
-        gap: 0.5rem;
-      }
-
-      .session-button {
-        text-align: left;
+      .secondary-button {
         background: rgba(255, 255, 255, 0.05);
         color: var(--text);
         border: 1px solid var(--line);
       }
 
-      .session-controls {
-        display: grid;
-        grid-template-columns: repeat(3, 1fr);
-        gap: 0.5rem;
+      .danger-button {
+        background: rgba(255, 107, 107, 0.16);
+        color: var(--danger);
+        border: 1px solid rgba(255, 107, 107, 0.28);
       }
 
-      .session-action {
-        padding: 0.7rem 0.8rem;
+      .ghost-button {
+        background: transparent;
+        color: var(--muted);
+        border: 1px solid transparent;
+      }
+
+      .auth-actions {
+        display: grid;
+        gap: 0.8rem;
+      }
+
+      .auth-footer {
+        padding-top: 0.2rem;
+        color: var(--muted);
+        font-size: 0.92rem;
+      }
+
+      .auth-inline-link {
+        color: var(--primary);
+        background: transparent;
+        border: 0;
+        padding: 0;
+        width: auto;
         font-weight: 700;
       }
 
-      .session-action.open {
-        background: rgba(128, 237, 153, 0.14);
-        color: var(--primary);
-        border: 1px solid rgba(128, 237, 153, 0.25);
+      .auth-message {
+        min-height: 1.4rem;
+        color: var(--muted);
+        font-size: 0.92rem;
       }
 
-      .session-action.stop {
-        background: rgba(255, 209, 102, 0.16);
-        color: var(--warning);
-        border: 1px solid rgba(255, 209, 102, 0.3);
-      }
-
-      .session-action.remove {
-        background: rgba(255, 107, 107, 0.15);
+      .auth-message.error {
         color: var(--danger);
-        border: 1px solid rgba(255, 107, 107, 0.3);
+      }
+
+      .app-shell {
+        min-height: 100vh;
+        padding: 1.25rem;
+      }
+
+      .app-frame {
+        width: min(1360px, 100%);
+        margin: 0 auto;
+        display: grid;
+        gap: 1rem;
+      }
+
+      .app-header {
+        position: relative;
+        z-index: 20;
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 1rem;
+        padding: 1rem 1.1rem;
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        box-shadow: var(--shadow);
+        backdrop-filter: blur(12px);
+      }
+
+      .app-brand {
+        display: grid;
+        gap: 0.45rem;
+      }
+
+      .app-brand h1 {
+        margin: 0;
+        font-size: clamp(1.8rem, 2.2vw, 2.6rem);
+      }
+
+      .app-brand p {
+        margin: 0;
+        color: var(--muted);
+        max-width: 56ch;
+      }
+
+      .profile-trigger-wrap {
+        position: relative;
+        z-index: 30;
+      }
+
+      .profile-trigger {
+        display: flex;
+        align-items: center;
+        gap: 0.85rem;
+        min-width: 14rem;
+        padding: 0.65rem 0.8rem;
+        border-radius: 18px;
+        background: rgba(255, 255, 255, 0.05);
+        color: var(--text);
+        border: 1px solid var(--line);
+      }
+
+      .avatar {
+        width: 2.7rem;
+        height: 2.7rem;
+        display: grid;
+        place-items: center;
+        border-radius: 999px;
+        background: linear-gradient(135deg, rgba(142, 240, 169, 0.18), rgba(87, 204, 153, 0.38));
+        color: var(--primary);
+        font-weight: 800;
+      }
+
+      .profile-trigger-meta {
+        display: grid;
+        gap: 0.12rem;
+        text-align: left;
+      }
+
+      .profile-trigger-meta strong {
+        font-size: 0.98rem;
+      }
+
+      .profile-trigger-meta span {
+        color: var(--muted);
+        font-size: 0.84rem;
+      }
+
+      .profile-menu {
+        position: absolute;
+        top: calc(100% + 0.7rem);
+        right: 0;
+        width: min(22rem, calc(100vw - 2.5rem));
+        padding: 0.8rem;
+        border-radius: 22px;
+        border: 1px solid var(--line-strong);
+        background: var(--panel-strong);
+        box-shadow: var(--shadow);
+        display: grid;
+        gap: 0.6rem;
+        z-index: 40;
+      }
+
+      .profile-menu[hidden] {
+        display: none;
+      }
+
+      .profile-menu-card {
+        padding: 0.9rem;
+        border-radius: 16px;
+        border: 1px solid var(--line);
+        background: var(--panel-lite);
+      }
+
+      .profile-menu-card strong {
+        display: block;
+      }
+
+      .profile-menu-card span {
+        color: var(--muted);
+        font-size: 0.9rem;
+      }
+
+      .menu-list {
+        display: grid;
+        gap: 0.35rem;
+      }
+
+      .menu-item {
+        text-align: left;
+        border-radius: 14px;
+        padding: 0.85rem 0.9rem;
+        background: rgba(255, 255, 255, 0.03);
+        color: var(--text);
+        border: 1px solid transparent;
+      }
+
+      .menu-item:hover {
+        border-color: var(--line);
+      }
+
+      .menu-item small {
+        display: block;
+        margin-top: 0.18rem;
+        color: var(--muted);
+      }
+
+      .app-grid {
+        position: relative;
+        z-index: 1;
+        display: grid;
+        grid-template-columns: minmax(320px, 390px) minmax(0, 1fr);
+        gap: 1rem;
+      }
+
+      .app-column {
+        display: grid;
+        gap: 1rem;
+      }
+
+      .app-card {
+        padding: 1.15rem;
+        display: grid;
+        gap: 1rem;
+      }
+
+      .card-heading {
+        display: flex;
+        justify-content: space-between;
+        gap: 1rem;
+        align-items: flex-start;
+      }
+
+      .card-heading h2,
+      .card-heading h3 {
+        margin: 0;
+      }
+
+      .card-heading p {
+        margin: 0.35rem 0 0;
+        color: var(--muted);
+      }
+
+      .launch-actions,
+      .admin-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.75rem;
+      }
+
+      .session-list {
+        display: grid;
+        gap: 0.8rem;
+      }
+
+      .session-entry {
+        display: grid;
+        gap: 0.55rem;
+      }
+
+      .session-button {
+        width: 100%;
+        text-align: left;
+        background: rgba(255, 255, 255, 0.04);
+        color: var(--text);
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        padding: 1rem;
       }
 
       .session-button.ready {
-        border-color: rgba(128, 237, 153, 0.4);
+        border-color: rgba(142, 240, 169, 0.34);
       }
 
       .session-button.pending {
-        border-color: rgba(255, 209, 102, 0.45);
+        border-color: rgba(255, 209, 102, 0.35);
       }
 
       .session-button.error {
-        border-color: rgba(255, 107, 107, 0.55);
+        border-color: rgba(255, 107, 107, 0.45);
       }
 
       .session-name {
@@ -226,15 +505,15 @@
 
       .session-meta {
         display: block;
-        margin-top: 0.25rem;
+        margin-top: 0.28rem;
         color: var(--muted);
-        font-size: 0.9rem;
+        font-size: 0.92rem;
       }
 
       .status-chip {
         display: inline-flex;
-        margin-top: 0.55rem;
-        padding: 0.2rem 0.55rem;
+        margin-top: 0.65rem;
+        padding: 0.24rem 0.62rem;
         border-radius: 999px;
         font-size: 0.78rem;
         font-weight: 700;
@@ -242,7 +521,7 @@
       }
 
       .status-chip.ready {
-        background: rgba(128, 237, 153, 0.15);
+        background: rgba(142, 240, 169, 0.16);
         color: var(--primary);
       }
 
@@ -256,152 +535,455 @@
         color: var(--danger);
       }
 
-      .panel-copy {
+      .session-controls {
         display: grid;
-        gap: 0.8rem;
-        align-content: start;
-        min-height: 20rem;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 0.5rem;
+      }
+
+      .session-open {
+        background: rgba(142, 240, 169, 0.16);
+        color: var(--primary);
+        border: 1px solid rgba(142, 240, 169, 0.24);
+      }
+
+      .session-stop {
+        background: rgba(255, 209, 102, 0.16);
+        color: var(--warning);
+        border: 1px solid rgba(255, 209, 102, 0.28);
+      }
+
+      .session-remove {
+        background: rgba(255, 107, 107, 0.15);
+        color: var(--danger);
+        border: 1px solid rgba(255, 107, 107, 0.28);
+      }
+
+      .status-card {
+        padding: 1.15rem;
+      }
+
+      .status-card textarea {
+        min-height: 12rem;
+        white-space: pre-wrap;
+        font-family: "SFMono-Regular", Consolas, monospace;
       }
 
       .empty-state {
         display: grid;
         place-items: center;
         min-height: 12rem;
+        border-radius: 18px;
         border: 1px dashed var(--line);
-        border-radius: 20px;
         color: var(--muted);
-        padding: 2rem;
         text-align: center;
+        padding: 1.5rem;
       }
 
-      .status {
-        min-height: 8rem;
+      .admin-summary {
+        border-radius: 18px;
+        border: 1px solid var(--line);
+        padding: 1rem;
+        background: rgba(255, 255, 255, 0.03);
         white-space: pre-wrap;
-        font-family: "SFMono-Regular", Consolas, monospace;
       }
 
-      .error {
+      .inline-copy {
+        color: var(--muted);
+        font-size: 0.92rem;
+      }
+
+      .modal-backdrop {
+        position: fixed;
+        inset: 0;
+        background: rgba(2, 7, 12, 0.66);
+        display: grid;
+        place-items: center;
+        padding: 1.5rem;
+        z-index: 60;
+      }
+
+      .modal-backdrop[hidden] {
+        display: none;
+      }
+
+      .modal {
+        width: min(32rem, 100%);
+        padding: 1.35rem;
+        border-radius: 24px;
+        background: var(--panel-strong);
+        border: 1px solid var(--line-strong);
+        box-shadow: var(--shadow);
+        display: grid;
+        gap: 1rem;
+      }
+
+      .modal-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: start;
+        gap: 1rem;
+      }
+
+      .modal-header h2 {
+        margin: 0;
+      }
+
+      .modal-header p {
+        margin: 0.35rem 0 0;
+        color: var(--muted);
+      }
+
+      .modal-close {
+        width: auto;
+        min-width: 2.6rem;
+        padding: 0.7rem 0.8rem;
+        border-radius: 14px;
+        background: rgba(255, 255, 255, 0.05);
+        color: var(--text);
+        border: 1px solid var(--line);
+      }
+
+      .modal-actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 0.75rem;
+      }
+
+      .modal-message {
+        min-height: 1.3rem;
+        color: var(--muted);
+      }
+
+      .modal-message.error {
         color: var(--danger);
       }
 
-      @media (max-width: 960px) {
-        .grid {
+      @media (max-width: 980px) {
+        .auth-layout,
+        .app-grid {
           grid-template-columns: 1fr;
+        }
+
+        .auth-story {
+          min-height: auto;
+        }
+
+        .story-grid {
+          grid-template-columns: 1fr;
+        }
+
+        .app-header {
+          flex-direction: column;
+          align-items: stretch;
+        }
+
+        .profile-trigger {
+          min-width: 0;
         }
       }
     </style>
   </head>
   <body>
-    <main>
-      <section class="hero">
-        <span class="pill">Linux desktop management</span>
-        <h1>Your desktop, launched from one control plane.</h1>
-        <p>
-          Create accounts, launch isolated workstation sessions, and monitor their state from a
-          single management interface. Open a ready session explicitly when you want to enter it.
-        </p>
-      </section>
-
-      <section class="grid">
-        <div class="stack">
-          <article class="card">
-            <h2>1. Account</h2>
-            <div class="auth-toggle">
-              <button id="signInTab" class="auth-tab active" type="button">Sign In</button>
-              <button id="registerTab" class="auth-tab" type="button">Create Account</button>
-            </div>
-            <label for="displayName">Display name</label>
-            <input id="displayName" value="Demo User" />
-            <label for="username">Username</label>
-            <input id="username" value="demo" />
-            <label for="password">Password</label>
-            <input id="password" type="password" value="demo" />
-            <div class="actions">
-              <button id="loginButton">Sign In</button>
-              <button id="registerButton" type="button" style="display: none;">Create Account</button>
-            </div>
-          </article>
-
-          <article class="card">
-            <h2>2. Profile</h2>
-            <div id="profilePanel" class="profile">
-              <div class="muted">No user signed in yet.</div>
-            </div>
-          </article>
-
-          <article class="card">
-            <h2>3. Launch Desktop</h2>
-            <label for="distribution">Distribution</label>
-            <select id="distribution">
-              <option value="">Loading distributions...</option>
-            </select>
-            <label for="desktopEnvironment">Interface</label>
-            <select id="desktopEnvironment">
-              <option value="">Loading interfaces...</option>
-            </select>
-            <label for="instanceSize">Instance size</label>
-            <select id="instanceSize">
-              <option value="">Loading sizes...</option>
-            </select>
-            <div class="actions">
-              <button id="launchButton" disabled>Start New Desktop Session</button>
-            </div>
-          </article>
-
-          <article class="card">
-            <h2>Sessions</h2>
-            <p class="muted">Buttons show live status. A session becomes clickable once it is ready.</p>
-            <div id="sessionList" class="session-list">
-              <div class="empty-state">No sessions yet. Sign in and launch a desktop.</div>
-            </div>
-          </article>
-        </div>
-
-        <article class="card">
-          <h2>Session Launch</h2>
-          <div class="panel-copy">
-            <p class="muted">
-              New sessions move through a short lifecycle before they are usable.
+    <div id="authShell" class="auth-shell">
+      <div class="auth-layout">
+        <section class="auth-story">
+          <div>
+            <span class="eyebrow">Virtual workstation platform</span>
+            <h1>Secure Linux sessions in one browser workflow.</h1>
+            <p>
+              Sign in to launch isolated desktops or terminals, open ready sessions, and keep your
+              workspace history organized without exposing the host machine directly.
             </p>
-            <div class="empty-state">
-              Building...
-              <br />
-              Launching...
-              <br />
-              Ready...
-              <br /><br />
-              When a session reaches <strong>Ready</strong>, use the <strong>Open</strong> action.
+          </div>
+
+          <div class="story-grid">
+            <article class="story-card">
+              <strong>Session Catalog</strong>
+              <span>Choose distributions, interfaces, and sizes from a declarative runtime catalog.</span>
+            </article>
+            <article class="story-card">
+              <strong>Managed Launches</strong>
+              <span>Track build, launch, and ready states without leaving the control plane.</span>
+            </article>
+            <article class="story-card">
+              <strong>Profile Driven</strong>
+              <span>Keep your account settings, defaults, and session history tied to your profile.</span>
+            </article>
+          </div>
+        </section>
+
+        <section class="auth-card">
+          <div class="auth-card-header">
+            <h2 id="authHeading">Sign in to continue</h2>
+            <p id="authSubheading">Access your existing Linux workspaces and launch new sessions.</p>
+          </div>
+
+          <div class="auth-toggle">
+            <button id="signInTab" class="auth-tab active" type="button">Sign In</button>
+            <button id="registerTab" class="auth-tab" type="button">Create Account</button>
+          </div>
+
+          <div class="field-grid">
+            <div id="displayNameField" class="hidden">
+              <label for="displayName">Display name</label>
+              <input id="displayName" value="Demo User" autocomplete="name" />
+            </div>
+
+            <div>
+              <label for="username">Username</label>
+              <input id="username" value="demo" autocomplete="username" />
+            </div>
+
+            <div>
+              <label for="password">Password</label>
+              <input id="password" type="password" value="demo" autocomplete="current-password" />
             </div>
           </div>
-        </article>
-      </section>
 
-      <section class="grid" style="margin-top: 1rem;">
-        <article class="card">
-          <h2>Platform State</h2>
-          <textarea id="status" class="status" readonly></textarea>
-        </article>
-      </section>
-    </main>
+          <div class="auth-actions">
+            <button id="loginButton" class="primary-button" type="button">Sign In</button>
+            <button id="registerButton" class="primary-button hidden" type="button">Create Account</button>
+          </div>
+
+          <div id="authMessage" class="auth-message"></div>
+
+          <div class="auth-footer">
+            <span id="authFooterText">Need an account?</span>
+            <button id="authFooterAction" class="auth-inline-link" type="button">Create one now</button>
+          </div>
+        </section>
+      </div>
+    </div>
+
+    <div id="appShell" class="app-shell hidden">
+      <div class="app-frame">
+        <header class="app-header">
+          <div class="app-brand">
+            <span class="eyebrow">Virtual workstation</span>
+            <h1>Launch, open, and manage Linux sessions.</h1>
+            <p>
+              Select a runtime profile, start a new session, and manage session lifecycle from one
+              authenticated workspace.
+            </p>
+          </div>
+
+          <div class="profile-trigger-wrap">
+            <button id="profileTrigger" class="profile-trigger" type="button" aria-expanded="false">
+              <div id="profileAvatar" class="avatar">D</div>
+              <div class="profile-trigger-meta">
+                <strong id="profileDisplayName">Demo User</strong>
+                <span id="profileUsername">@demo</span>
+              </div>
+            </button>
+
+            <div id="profileMenu" class="profile-menu" hidden>
+              <div class="profile-menu-card">
+                <strong id="menuDisplayName">Demo User</strong>
+                <span id="menuProfileMeta">Signed in</span>
+              </div>
+              <div class="menu-list">
+                <button id="manageProfileButton" class="menu-item" type="button">
+                  Manage Profile
+                  <small>Edit display name and profile details.</small>
+                </button>
+                <button id="profileSettingsButton" class="menu-item" type="button">
+                  Profile Settings
+                  <small>Update default launch preferences.</small>
+                </button>
+                <button id="signOutButton" class="menu-item danger-button" type="button">
+                  Sign Out
+                  <small>End this browser session and return to the login screen.</small>
+                </button>
+              </div>
+            </div>
+          </div>
+        </header>
+
+        <section class="app-grid">
+          <div class="app-column">
+            <article class="app-card">
+              <div class="card-heading">
+                <div>
+                  <h2>Launch Session</h2>
+                  <p>Choose a distribution, interface, and instance size for the next workstation.</p>
+                </div>
+              </div>
+
+              <div>
+                <label for="distribution">Distribution</label>
+                <select id="distribution">
+                  <option value="">Loading distributions...</option>
+                </select>
+              </div>
+
+              <div>
+                <label for="desktopEnvironment">Interface</label>
+                <select id="desktopEnvironment">
+                  <option value="">Loading interfaces...</option>
+                </select>
+              </div>
+
+              <div>
+                <label for="instanceSize">Instance size</label>
+                <select id="instanceSize">
+                  <option value="">Loading sizes...</option>
+                </select>
+              </div>
+
+              <div class="launch-actions">
+                <button id="launchButton" class="primary-button" type="button" disabled>
+                  Start New Session
+                </button>
+              </div>
+
+              <div class="inline-copy">
+                A session becomes usable after it moves through building and launching into ready.
+              </div>
+            </article>
+
+            <article id="adminTools" class="app-card hidden">
+              <div class="card-heading">
+                <div>
+                  <h2>Admin Tools</h2>
+                  <p>Compare persisted session records with live containers and run maintenance actions.</p>
+                </div>
+              </div>
+
+              <div class="admin-actions">
+                <button id="adminCleanupButton" class="secondary-button" type="button">Run Cleanup Now</button>
+                <button id="adminStopAllButton" class="secondary-button" type="button">Stop All Active Sessions</button>
+                <button id="adminRemoveInactiveButton" class="danger-button" type="button">Remove Inactive Sessions</button>
+              </div>
+
+              <div>
+                <label for="adminInactiveHours">Remove inactive session records older than</label>
+                <input id="adminInactiveHours" type="number" min="0" step="1" value="24" />
+              </div>
+
+              <div id="adminCleanupSummary" class="admin-summary">
+                Admin tools are available to administrative accounts.
+              </div>
+            </article>
+          </div>
+
+          <div class="app-column">
+            <article class="app-card">
+              <div class="card-heading">
+                <div>
+                  <h2>Your Sessions</h2>
+                  <p>Open ready sessions, stop running ones, or remove records you no longer need.</p>
+                </div>
+              </div>
+
+              <div id="sessionList" class="session-list">
+                <div class="empty-state">No sessions yet. Launch a session to get started.</div>
+              </div>
+            </article>
+
+            <article class="status-card">
+              <div class="card-heading">
+                <div>
+                  <h3>Platform State</h3>
+                  <p>Operational detail for the current action or selected session.</p>
+                </div>
+              </div>
+              <textarea id="status" readonly></textarea>
+            </article>
+          </div>
+        </section>
+      </div>
+    </div>
+
+    <div id="profileModalBackdrop" class="modal-backdrop" hidden>
+      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="profileModalTitle">
+        <div class="modal-header">
+          <div>
+            <h2 id="profileModalTitle">Profile Settings</h2>
+            <p>Update your display name and default launch preference.</p>
+          </div>
+          <button id="profileModalClose" class="modal-close" type="button">Close</button>
+        </div>
+
+        <div>
+          <label for="settingsDisplayName">Display name</label>
+          <input id="settingsDisplayName" autocomplete="name" />
+        </div>
+
+        <div>
+          <label for="settingsDefaultInterface">Default interface preference</label>
+          <select id="settingsDefaultInterface">
+            <option value="xfce">XFCE Desktop</option>
+            <option value="gnome">GNOME Desktop</option>
+            <option value="cli">Command Line</option>
+          </select>
+        </div>
+
+        <div id="profileModalMessage" class="modal-message"></div>
+
+        <div class="modal-actions">
+          <button id="profileModalCancel" class="ghost-button" type="button">Cancel</button>
+          <button id="profileModalSave" class="primary-button" type="button">Save Changes</button>
+        </div>
+      </div>
+    </div>
 
     <script>
-      const statusEl = document.getElementById("status");
-      const loginButton = document.getElementById("loginButton");
-      const registerButton = document.getElementById("registerButton");
-      const launchButton = document.getElementById("launchButton");
+      const authShellEl = document.getElementById("authShell");
+      const appShellEl = document.getElementById("appShell");
+      const authHeadingEl = document.getElementById("authHeading");
+      const authSubheadingEl = document.getElementById("authSubheading");
+      const authMessageEl = document.getElementById("authMessage");
+      const authFooterTextEl = document.getElementById("authFooterText");
+      const authFooterActionEl = document.getElementById("authFooterAction");
+      const signInTabEl = document.getElementById("signInTab");
+      const registerTabEl = document.getElementById("registerTab");
+      const displayNameFieldEl = document.getElementById("displayNameField");
+      const displayNameEl = document.getElementById("displayName");
+      const usernameEl = document.getElementById("username");
+      const passwordEl = document.getElementById("password");
+      const loginButtonEl = document.getElementById("loginButton");
+      const registerButtonEl = document.getElementById("registerButton");
+      const launchButtonEl = document.getElementById("launchButton");
       const distributionEl = document.getElementById("distribution");
       const desktopEnvironmentEl = document.getElementById("desktopEnvironment");
       const instanceSizeEl = document.getElementById("instanceSize");
-      const displayNameEl = document.getElementById("displayName");
       const sessionListEl = document.getElementById("sessionList");
-      const profilePanelEl = document.getElementById("profilePanel");
-      const signInTabEl = document.getElementById("signInTab");
-      const registerTabEl = document.getElementById("registerTab");
+      const statusEl = document.getElementById("status");
+      const profileTriggerEl = document.getElementById("profileTrigger");
+      const profileMenuEl = document.getElementById("profileMenu");
+      const profileAvatarEl = document.getElementById("profileAvatar");
+      const profileDisplayNameEl = document.getElementById("profileDisplayName");
+      const profileUsernameEl = document.getElementById("profileUsername");
+      const menuDisplayNameEl = document.getElementById("menuDisplayName");
+      const menuProfileMetaEl = document.getElementById("menuProfileMeta");
+      const manageProfileButtonEl = document.getElementById("manageProfileButton");
+      const profileSettingsButtonEl = document.getElementById("profileSettingsButton");
+      const signOutButtonEl = document.getElementById("signOutButton");
+      const adminToolsEl = document.getElementById("adminTools");
+      const adminCleanupButtonEl = document.getElementById("adminCleanupButton");
+      const adminStopAllButtonEl = document.getElementById("adminStopAllButton");
+      const adminRemoveInactiveButtonEl = document.getElementById("adminRemoveInactiveButton");
+      const adminInactiveHoursEl = document.getElementById("adminInactiveHours");
+      const adminCleanupSummaryEl = document.getElementById("adminCleanupSummary");
+      const profileModalBackdropEl = document.getElementById("profileModalBackdrop");
+      const profileModalCloseEl = document.getElementById("profileModalClose");
+      const profileModalCancelEl = document.getElementById("profileModalCancel");
+      const profileModalSaveEl = document.getElementById("profileModalSave");
+      const profileModalMessageEl = document.getElementById("profileModalMessage");
+      const settingsDisplayNameEl = document.getElementById("settingsDisplayName");
+      const settingsDefaultInterfaceEl = document.getElementById("settingsDefaultInterface");
+
+      const TOKEN_STORAGE_KEY = "virtualworkstation.token";
+      const USER_STORAGE_KEY = "virtualworkstation.user";
 
       let token = null;
-      let sessions = [];
+      let currentUser = null;
+      let currentIdentity = null;
       let authMode = "signin";
       let pollingHandle = null;
+      let sessions = [];
+      let adminSessions = [];
       let sessionActionInFlight = new Set();
       let catalog = {
         distributions: [],
@@ -411,59 +993,95 @@
         policies: {},
       };
 
-      function setStatus(value, isError) {
+      function setStatus(value, isError = false) {
         statusEl.value = value;
         statusEl.classList.toggle("error", Boolean(isError));
       }
 
-      function formatSessionState(state) {
-        if (state === "building") {
-          return "Building...";
-        }
-        if (state === "launching") {
-          return "Launching...";
-        }
-        if (state === "ready" || state === "running") {
-          return "Ready";
-        }
-        if (state === "error") {
-          return "Error";
-        }
-        return state || "Unknown";
+      function setAuthMessage(value, isError = false) {
+        authMessageEl.textContent = value || "";
+        authMessageEl.classList.toggle("error", Boolean(isError));
       }
 
-      function sessionTone(state) {
-        if (state === "ready" || state === "running") {
-          return "ready";
-        }
-        if (state === "error") {
-          return "error";
-        }
-        return "pending";
+      function setModalMessage(value, isError = false) {
+        profileModalMessageEl.textContent = value || "";
+        profileModalMessageEl.classList.toggle("error", Boolean(isError));
       }
 
-      function setAuthMode(mode) {
-        authMode = mode;
-        signInTabEl.classList.toggle("active", mode === "signin");
-        registerTabEl.classList.toggle("active", mode === "register");
-        loginButton.style.display = mode === "signin" ? "" : "none";
-        registerButton.style.display = mode === "register" ? "" : "none";
-        displayNameEl.style.display = mode === "register" ? "" : "none";
-        document.querySelector('label[for="displayName"]').style.display =
-          mode === "register" ? "" : "none";
-      }
-
-      function setCurrentUser(user) {
-        if (!user) {
-          profilePanelEl.innerHTML = '<div class="muted">No user signed in yet.</div>';
-          return;
+      function decodeTokenPayload(tokenValue) {
+        if (!tokenValue) {
+          return null;
         }
 
-        profilePanelEl.innerHTML = `
-          <strong>${user.profile.displayName}</strong>
-          <span class="muted">@${user.username}</span>
-          <span class="muted">Profile created ${new Date(user.profile.createdAt).toLocaleString()}</span>
-        `;
+        const [payload] = tokenValue.split(".");
+
+        if (!payload) {
+          return null;
+        }
+
+        try {
+          return JSON.parse(atob(payload.replace(/-/g, "+").replace(/_/g, "/")));
+        } catch (error) {
+          return null;
+        }
+      }
+
+      function persistAuthState() {
+        if (token) {
+          localStorage.setItem(TOKEN_STORAGE_KEY, token);
+        } else {
+          localStorage.removeItem(TOKEN_STORAGE_KEY);
+        }
+
+        if (currentUser) {
+          localStorage.setItem(USER_STORAGE_KEY, JSON.stringify(currentUser));
+        } else {
+          localStorage.removeItem(USER_STORAGE_KEY);
+        }
+      }
+
+      function loadStoredAuthState() {
+        const storedToken = localStorage.getItem(TOKEN_STORAGE_KEY);
+        const storedUser = localStorage.getItem(USER_STORAGE_KEY);
+
+        token = storedToken || null;
+        currentIdentity = decodeTokenPayload(token);
+        currentUser = storedUser ? JSON.parse(storedUser) : null;
+      }
+
+      function isAdmin() {
+        return Boolean(
+          currentIdentity &&
+            (currentIdentity.isAdmin ||
+              currentIdentity.role === "admin" ||
+              currentIdentity.username === "demo")
+        );
+      }
+
+      function getInitials(value) {
+        const source = String(value || "").trim();
+
+        if (!source) {
+          return "?";
+        }
+
+        return source
+          .split(/\s+/)
+          .slice(0, 2)
+          .map((part) => part[0]?.toUpperCase() || "")
+          .join("");
+      }
+
+      function findDistribution(distributionId) {
+        return catalog.distributions.find((entry) => entry.id === distributionId);
+      }
+
+      function findInterface(interfaceId) {
+        return catalog.interfaces.find((entry) => entry.id === interfaceId);
+      }
+
+      function findInstanceSize(instanceSizeId) {
+        return catalog.instanceSizes.find((entry) => entry.id === instanceSizeId);
       }
 
       function findRuntimeProfile(distributionId, interfaceId) {
@@ -474,64 +1092,181 @@
         );
       }
 
-      function populateDistributionOptions() {
-        distributionEl.innerHTML = catalog.distributions
-          .map(
-            (item) =>
-              `<option value="${item.id}">${item.name}</option>`
-          )
-          .join("");
-
-        distributionEl.value =
-          catalog.policies.defaultDistributionId ||
-          catalog.distributions.find((item) => item.default)?.id ||
-          catalog.distributions[0]?.id ||
-          "";
-      }
-
-      function populateInterfaceOptions() {
-        const selectedDistributionId = distributionEl.value;
-        const allowedInterfaces = catalog.interfaces.filter((item) =>
-          findRuntimeProfile(selectedDistributionId, item.id)
-        );
-
-        desktopEnvironmentEl.innerHTML = allowedInterfaces
-          .map(
-            (item) =>
-              `<option value="${item.id}">${item.name}</option>`
-          )
-          .join("");
-
-        const preferredInterfaceId =
-          catalog.policies.defaultInterfaceId ||
-          allowedInterfaces.find((item) => item.default)?.id ||
-          allowedInterfaces[0]?.id ||
-          "";
-
-        if (!allowedInterfaces.some((item) => item.id === desktopEnvironmentEl.value)) {
-          desktopEnvironmentEl.value = preferredInterfaceId;
+      function formatSessionState(state) {
+        if (state === "building") {
+          return "Building...";
         }
+
+        if (state === "launching") {
+          return "Launching...";
+        }
+
+        if (state === "ready" || state === "running") {
+          return "Ready";
+        }
+
+        if (state === "stopped") {
+          return "Stopped";
+        }
+
+        if (state === "error") {
+          return "Error";
+        }
+
+        return state || "Unknown";
       }
 
-      function populateInstanceSizeOptions() {
-        instanceSizeEl.innerHTML = catalog.instanceSizes
-          .map((item) => {
-            const resources = item.resources;
-            return `<option value="${item.id}">${item.name} - ${resources.cpus} vCPU / ${resources.memoryMiB} MiB / ${resources.storageGiB} GiB</option>`;
-          })
-          .join("");
+      function sessionTone(state) {
+        if (state === "ready" || state === "running") {
+          return "ready";
+        }
 
-        instanceSizeEl.value =
-          catalog.policies.defaultInstanceSizeId ||
-          catalog.instanceSizes.find((item) => item.default)?.id ||
-          catalog.instanceSizes[0]?.id ||
-          "";
+        if (state === "error") {
+          return "error";
+        }
+
+        return "pending";
+      }
+
+      function getSessionName(session) {
+        const distributionName =
+          findDistribution(session.distributionId)?.name || session.distributionId || "Linux";
+        const interfaceName =
+          findInterface(session.interfaceId || session.desktopEnvironment)?.name ||
+          session.interfaceId ||
+          session.desktopEnvironment ||
+          "Session";
+
+        return `${distributionName} / ${interfaceName}`;
+      }
+
+      function getSessionLabel(session) {
+        const size = findInstanceSize(session.instanceSizeId);
+        const parts = [];
+
+        if (size) {
+          parts.push(size.name);
+        }
+
+        if (session.statusDetail) {
+          parts.push(session.statusDetail);
+        } else if (session.createdAt) {
+          parts.push(new Date(session.createdAt).toLocaleString());
+        }
+
+        return parts.join(" • ");
+      }
+
+      function summarizeAdminSessions(entries) {
+        const summary = {
+          totalRecords: entries.length,
+          liveContainers: 0,
+          active: 0,
+          ready: 0,
+          building: 0,
+          inactive: 0,
+          errors: 0,
+          removableRecords: 0,
+        };
+
+        for (const session of entries) {
+          const hasLiveContainer = Boolean(session.containerId || session.containerName);
+
+          if (hasLiveContainer) {
+            summary.liveContainers += 1;
+          }
+
+          if (["ready", "running", "launching", "building"].includes(session.state)) {
+            summary.active += 1;
+          }
+
+          if (session.state === "ready" || session.state === "running") {
+            summary.ready += 1;
+          }
+
+          if (session.state === "building" || session.state === "launching") {
+            summary.building += 1;
+          }
+
+          if (["stopped", "error"].includes(session.state)) {
+            summary.inactive += 1;
+            summary.removableRecords += 1;
+          }
+
+          if (session.state === "error") {
+            summary.errors += 1;
+          }
+        }
+
+        return summary;
+      }
+
+      function showSignedOutView() {
+        authShellEl.classList.remove("hidden");
+        appShellEl.classList.add("hidden");
+        closeProfileMenu();
+        closeProfileModal();
+      }
+
+      function showSignedInView() {
+        authShellEl.classList.add("hidden");
+        appShellEl.classList.remove("hidden");
+      }
+
+      function setAuthMode(mode) {
+        authMode = mode;
+        const registerMode = mode === "register";
+
+        signInTabEl.classList.toggle("active", mode === "signin");
+        registerTabEl.classList.toggle("active", registerMode);
+        displayNameFieldEl.classList.toggle("hidden", !registerMode);
+        loginButtonEl.classList.toggle("hidden", registerMode);
+        registerButtonEl.classList.toggle("hidden", !registerMode);
+        authHeadingEl.textContent = registerMode
+          ? "Create your account"
+          : "Sign in to continue";
+        authSubheadingEl.textContent = registerMode
+          ? "Set up a profile and start launching Linux sessions."
+          : "Access your existing Linux workspaces and launch new sessions.";
+        authFooterTextEl.textContent = registerMode
+          ? "Already have an account?"
+          : "Need an account?";
+        authFooterActionEl.textContent = registerMode
+          ? "Sign in instead"
+          : "Create one now";
+        setAuthMessage("");
+      }
+
+      function renderProfileSummary() {
+        if (!currentUser) {
+          return;
+        }
+
+        const displayName = currentUser.profile.displayName;
+        profileAvatarEl.textContent = getInitials(displayName);
+        profileDisplayNameEl.textContent = displayName;
+        profileUsernameEl.textContent = `@${currentUser.username}`;
+        menuDisplayNameEl.textContent = displayName;
+        menuProfileMetaEl.textContent = [
+          `@${currentUser.username}`,
+          isAdmin() ? "Administrator" : "Workspace user",
+        ].join(" • ");
+      }
+
+      function renderAdminTools() {
+        const visible = Boolean(token && isAdmin());
+        adminToolsEl.classList.toggle("hidden", !visible);
+
+        if (!visible) {
+          adminCleanupSummaryEl.textContent =
+            "Admin tools are available to administrative accounts.";
+        }
       }
 
       function renderSessions() {
         if (sessions.length === 0) {
           sessionListEl.innerHTML =
-            '<div class="empty-state">No sessions yet. Sign in and launch a desktop.</div>';
+            '<div class="empty-state">No sessions yet. Launch a session to get started.</div>';
           return;
         }
 
@@ -539,8 +1274,6 @@
           .map((session) => {
             const tone = sessionTone(session.state);
             const canOpen = session.state === "ready" || session.state === "running";
-            const disabled = canOpen ? "" : "disabled";
-            const actionLabel = canOpen ? "Open Session" : formatSessionState(session.state);
             const openDisabled =
               sessionActionInFlight.has(`${session.id}:open`) || !canOpen ? "disabled" : "";
             const stopDisabled =
@@ -550,21 +1283,20 @@
               )
                 ? "disabled"
                 : "";
-            const removeDisabled = sessionActionInFlight.has(`${session.id}:remove`)
-              ? "disabled"
-              : "";
+            const removeDisabled =
+              sessionActionInFlight.has(`${session.id}:remove`) ? "disabled" : "";
 
             return `
               <div class="session-entry">
-                <button class="session-button ${tone}" data-session-id="${session.id}" type="button" ${disabled}>
+                <button class="session-button ${tone}" data-session-id="${session.id}" type="button">
                   <span class="session-name">${session.name}</span>
                   <span class="session-meta">${session.label}</span>
-                  <span class="status-chip ${tone}">${actionLabel}</span>
+                  <span class="status-chip ${tone}">${formatSessionState(session.state)}</span>
                 </button>
                 <div class="session-controls">
-                  <button class="session-action open" data-open-session-id="${session.id}" type="button" ${openDisabled}>Open</button>
-                  <button class="session-action stop" data-stop-session-id="${session.id}" type="button" ${stopDisabled}>Stop</button>
-                  <button class="session-action remove" data-remove-session-id="${session.id}" type="button" ${removeDisabled}>Remove</button>
+                  <button class="session-open secondary-button" data-open-session-id="${session.id}" type="button" ${openDisabled}>Open</button>
+                  <button class="session-stop secondary-button" data-stop-session-id="${session.id}" type="button" ${stopDisabled}>Stop</button>
+                  <button class="session-remove secondary-button" data-remove-session-id="${session.id}" type="button" ${removeDisabled}>Remove</button>
                 </div>
               </div>
             `;
@@ -573,38 +1305,38 @@
 
         for (const button of sessionListEl.querySelectorAll("[data-session-id]")) {
           button.addEventListener("click", () => {
-            const session = sessions.find((item) => item.id === button.getAttribute("data-session-id"));
-            if (session) {
-              setStatus(
-                [
-                  `${session.name}`,
-                  `Status: ${formatSessionState(session.state)}`,
-                  session.label,
-                  session.url ? `Session URL: ${session.url}` : "Session URL not available yet.",
-                ].join("\n")
-              );
+            const session = sessions.find((entry) => entry.id === button.dataset.sessionId);
+
+            if (!session) {
+              return;
             }
+
+            setStatus(
+              [
+                session.name,
+                `Status: ${formatSessionState(session.state)}`,
+                session.label,
+                session.url ? `Session URL: ${session.url}` : "Session URL not available yet.",
+              ].join("\n")
+            );
           });
         }
 
         for (const button of sessionListEl.querySelectorAll("[data-open-session-id]")) {
           button.addEventListener("click", async () => {
-            const sessionId = button.getAttribute("data-open-session-id");
-            await openSession(sessionId);
+            await openSession(button.dataset.openSessionId);
           });
         }
 
         for (const button of sessionListEl.querySelectorAll("[data-stop-session-id]")) {
           button.addEventListener("click", async () => {
-            const sessionId = button.getAttribute("data-stop-session-id");
-            await stopSession(sessionId);
+            await stopSession(button.dataset.stopSessionId);
           });
         }
 
         for (const button of sessionListEl.querySelectorAll("[data-remove-session-id]")) {
           button.addEventListener("click", async () => {
-            const sessionId = button.getAttribute("data-remove-session-id");
-            await removeSession(sessionId);
+            await removeSession(button.dataset.removeSessionId);
           });
         }
       }
@@ -617,6 +1349,78 @@
         });
 
         renderSessions();
+      }
+
+      function populateDistributionOptions() {
+        distributionEl.innerHTML = catalog.distributions
+          .map((distribution) => `<option value="${distribution.id}">${distribution.name}</option>`)
+          .join("");
+
+        distributionEl.value =
+          catalog.policies.defaultDistributionId ||
+          catalog.distributions.find((entry) => entry.default)?.id ||
+          catalog.distributions[0]?.id ||
+          "";
+      }
+
+      function populateInterfaceOptions() {
+        const allowedInterfaces = catalog.interfaces.filter((entry) =>
+          findRuntimeProfile(distributionEl.value, entry.id)
+        );
+
+        desktopEnvironmentEl.innerHTML = allowedInterfaces
+          .map((entry) => `<option value="${entry.id}">${entry.name}</option>`)
+          .join("");
+
+        const preferredInterface =
+          currentUser?.profile?.preferences?.defaultDesktopEnvironment ||
+          catalog.policies.defaultInterfaceId ||
+          allowedInterfaces.find((entry) => entry.default)?.id ||
+          allowedInterfaces[0]?.id ||
+          "";
+
+        desktopEnvironmentEl.value = allowedInterfaces.some(
+          (entry) => entry.id === preferredInterface
+        )
+          ? preferredInterface
+          : allowedInterfaces[0]?.id || "";
+      }
+
+      function populateInstanceSizeOptions() {
+        instanceSizeEl.innerHTML = catalog.instanceSizes
+          .map((entry) => {
+            const resources = entry.resources;
+            return `<option value="${entry.id}">${entry.name} - ${resources.cpus} vCPU / ${resources.memoryMiB} MiB / ${resources.storageGiB} GiB</option>`;
+          })
+          .join("");
+
+        instanceSizeEl.value =
+          catalog.policies.defaultInstanceSizeId ||
+          catalog.instanceSizes.find((entry) => entry.default)?.id ||
+          catalog.instanceSizes[0]?.id ||
+          "";
+      }
+
+      async function loadCatalog() {
+        setStatus("Loading workspace catalog...");
+
+        const response = await fetch("/api/catalog");
+        const payload = await response.json();
+
+        if (!response.ok) {
+          setStatus(JSON.stringify(payload, null, 2), true);
+          launchButtonEl.disabled = true;
+          return;
+        }
+
+        catalog = payload;
+        populateDistributionOptions();
+        populateInterfaceOptions();
+        populateInstanceSizeOptions();
+        settingsDefaultInterfaceEl.value =
+          currentUser?.profile?.preferences?.defaultDesktopEnvironment || "xfce";
+        launchButtonEl.disabled = !token;
+        setStatus("Workspace catalog loaded.");
       }
 
       async function refreshSessions() {
@@ -638,16 +1442,242 @@
         mergeSessions(
           (payload.sessions || []).map((session) => ({
             id: session.id,
-            name: `${(session.distributionId || "linux").toUpperCase()} / ${(session.interfaceId || session.desktopEnvironment || "session").toUpperCase()}`,
-            label:
-              session.statusDetail ||
-              `${formatSessionState(session.state)} • ${new Date(
-                session.createdAt
-              ).toLocaleString()}`,
+            name: getSessionName(session),
+            label: getSessionLabel(session),
             state: session.state,
             url: session.connection ? session.connection.url : "",
           }))
         );
+      }
+
+      async function refreshAdminSessions() {
+        if (!token || !isAdmin()) {
+          adminSessions = [];
+          renderAdminTools();
+          return;
+        }
+
+        const response = await fetch("/api/admin/sessions", {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const payload = await response.json();
+
+        if (!response.ok) {
+          adminCleanupSummaryEl.textContent = JSON.stringify(payload, null, 2);
+          return;
+        }
+
+        adminSessions = payload.sessions || [];
+        const summary = summarizeAdminSessions(adminSessions);
+        adminCleanupSummaryEl.textContent = [
+          `Tracked session records: ${summary.totalRecords}`,
+          `Live workstation containers: ${summary.liveContainers}`,
+          `Active records: ${summary.active}`,
+          `Ready records: ${summary.ready}`,
+          `Building or launching: ${summary.building}`,
+          `Inactive records: ${summary.inactive}`,
+          `Errored records: ${summary.errors}`,
+          `Inactive records removable now: ${summary.removableRecords}`,
+        ].join("\n");
+      }
+
+      async function loadCurrentUser() {
+        if (!token) {
+          return false;
+        }
+
+        const response = await fetch("/api/me", {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const payload = await response.json();
+
+        if (!response.ok) {
+          return false;
+        }
+
+        currentUser = payload.user;
+        persistAuthState();
+        renderProfileSummary();
+        settingsDisplayNameEl.value = currentUser.profile.displayName;
+        settingsDefaultInterfaceEl.value =
+          currentUser.profile.preferences?.defaultDesktopEnvironment || "xfce";
+        return true;
+      }
+
+      function startSessionPolling() {
+        stopSessionPolling();
+        pollingHandle = setInterval(() => {
+          refreshSessions().catch(() => {});
+          if (isAdmin()) {
+            refreshAdminSessions().catch(() => {});
+          }
+        }, 3000);
+      }
+
+      function stopSessionPolling() {
+        if (pollingHandle) {
+          clearInterval(pollingHandle);
+          pollingHandle = null;
+        }
+      }
+
+      function closeProfileMenu() {
+        profileMenuEl.hidden = true;
+        profileTriggerEl.setAttribute("aria-expanded", "false");
+      }
+
+      function toggleProfileMenu() {
+        const nextHidden = !profileMenuEl.hidden;
+        profileMenuEl.hidden = nextHidden;
+        profileTriggerEl.setAttribute("aria-expanded", String(!nextHidden));
+      }
+
+      function openProfileModal() {
+        if (!currentUser) {
+          return;
+        }
+
+        settingsDisplayNameEl.value = currentUser.profile.displayName;
+        settingsDefaultInterfaceEl.value =
+          currentUser.profile.preferences?.defaultDesktopEnvironment || "xfce";
+        setModalMessage("");
+        profileModalBackdropEl.hidden = false;
+        closeProfileMenu();
+      }
+
+      function closeProfileModal() {
+        profileModalBackdropEl.hidden = true;
+        setModalMessage("");
+      }
+
+      function signOut() {
+        token = null;
+        currentUser = null;
+        currentIdentity = null;
+        sessions = [];
+        adminSessions = [];
+        sessionActionInFlight = new Set();
+        persistAuthState();
+        stopSessionPolling();
+        renderSessions();
+        renderAdminTools();
+        showSignedOutView();
+        setAuthMode("signin");
+        setStatus("Signed out.");
+      }
+
+      async function authenticate(route) {
+        setAuthMessage(route === "/api/login" ? "Signing in..." : "Creating account...");
+
+        const response = await fetch(route, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            displayName: displayNameEl.value,
+            username: usernameEl.value,
+            password: passwordEl.value,
+            defaultDesktopEnvironment: desktopEnvironmentEl.value || "xfce",
+          }),
+        });
+        const payload = await response.json();
+
+        if (!response.ok) {
+          setAuthMessage(payload.error || JSON.stringify(payload), true);
+          return;
+        }
+
+        token = payload.token;
+        currentIdentity = decodeTokenPayload(token);
+        currentUser = payload.user;
+        persistAuthState();
+        renderProfileSummary();
+        renderAdminTools();
+        showSignedInView();
+        launchButtonEl.disabled = false;
+        await loadCatalog();
+        await loadCurrentUser();
+        await refreshSessions();
+        if (isAdmin()) {
+          await refreshAdminSessions();
+        }
+        startSessionPolling();
+        setAuthMessage("");
+        setStatus(JSON.stringify(payload, null, 2));
+      }
+
+      async function saveProfileSettings() {
+        if (!token) {
+          return;
+        }
+
+        setModalMessage("Saving profile settings...");
+
+        const response = await fetch("/api/me", {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            displayName: settingsDisplayNameEl.value,
+            preferences: {
+              defaultDesktopEnvironment: settingsDefaultInterfaceEl.value,
+            },
+          }),
+        });
+        const payload = await response.json();
+
+        if (!response.ok) {
+          setModalMessage(payload.error || JSON.stringify(payload), true);
+          return;
+        }
+
+        currentUser = payload.user;
+        persistAuthState();
+        renderProfileSummary();
+        populateInterfaceOptions();
+        setModalMessage("Profile updated.");
+        setStatus(JSON.stringify(payload, null, 2));
+        setTimeout(() => {
+          closeProfileModal();
+        }, 500);
+      }
+
+      async function launchSession() {
+        setStatus("Requesting new session...");
+
+        const response = await fetch("/api/workspaces/launch", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            distributionId: distributionEl.value,
+            interfaceId: desktopEnvironmentEl.value,
+            instanceSizeId: instanceSizeEl.value,
+          }),
+        });
+        const payload = await response.json();
+
+        if (!response.ok) {
+          setStatus(JSON.stringify(payload, null, 2), true);
+          return;
+        }
+
+        sessions = [
+          {
+            id: payload.sessionId,
+            name: getSessionName(payload),
+            label: payload.statusDetail || formatSessionState(payload.state),
+            state: payload.state,
+            url: "",
+          },
+          ...sessions,
+        ];
+        renderSessions();
+        refreshSessions().catch(() => {});
+        setStatus(JSON.stringify(payload, null, 2));
       }
 
       async function openSession(sessionId) {
@@ -655,7 +1685,8 @@
         renderSessions();
 
         try {
-          const session = sessions.find((item) => item.id === sessionId);
+          const session = sessions.find((entry) => entry.id === sessionId);
+
           if (
             session &&
             (session.state === "ready" || session.state === "running") &&
@@ -689,8 +1720,11 @@
             return;
           }
 
-          setStatus(JSON.stringify(payload, null, 2));
           await refreshSessions();
+          if (isAdmin()) {
+            await refreshAdminSessions();
+          }
+          setStatus(JSON.stringify(payload, null, 2));
         } finally {
           sessionActionInFlight.delete(`${sessionId}:stop`);
           renderSessions();
@@ -716,161 +1750,216 @@
             return;
           }
 
-          sessions = sessions.filter((session) => session.id !== sessionId);
+          sessions = sessions.filter((entry) => entry.id !== sessionId);
           renderSessions();
+          if (isAdmin()) {
+            await refreshAdminSessions();
+          }
           setStatus(JSON.stringify(payload, null, 2));
-          await refreshSessions();
         } finally {
           sessionActionInFlight.delete(`${sessionId}:remove`);
           renderSessions();
         }
       }
 
-      function startSessionPolling() {
-        if (pollingHandle) {
-          clearInterval(pollingHandle);
-        }
+      async function runCleanup() {
+        adminCleanupButtonEl.disabled = true;
+        adminStopAllButtonEl.disabled = true;
+        adminRemoveInactiveButtonEl.disabled = true;
+        adminInactiveHoursEl.disabled = true;
+        adminCleanupSummaryEl.textContent = "Running backend cleanup...";
+        setStatus("Running backend cleanup...");
 
-        pollingHandle = setInterval(() => {
-          refreshSessions().catch(() => {});
-        }, 3000);
+        try {
+          const response = await fetch("/api/admin/cleanup", {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${token}`,
+            },
+          });
+          const payload = await response.json();
+
+          if (!response.ok) {
+            adminCleanupSummaryEl.textContent = JSON.stringify(payload, null, 2);
+            setStatus(JSON.stringify(payload, null, 2), true);
+            return;
+          }
+
+          const cleanup = payload.cleanup || {};
+          adminCleanupSummaryEl.textContent = [
+            `Requested by: ${cleanup.requestedBy || "unknown"}`,
+            `Tracked session records: ${cleanup.totalSessions ?? "n/a"}`,
+            `Live workstation containers: ${cleanup.activeTrackedContainers ?? "n/a"}`,
+            `Managed container labels seen: ${cleanup.totalManagedContainers ?? "n/a"}`,
+            `Removed orphaned containers: ${cleanup.removedOrphanedContainers ?? "n/a"}`,
+            `Normalized records: ${cleanup.normalizedSessions ?? "n/a"}`,
+          ].join("\n");
+          await refreshAdminSessions();
+          setStatus(JSON.stringify(payload, null, 2));
+        } finally {
+          adminCleanupButtonEl.disabled = false;
+          adminStopAllButtonEl.disabled = false;
+          adminRemoveInactiveButtonEl.disabled = false;
+          adminInactiveHoursEl.disabled = false;
+        }
       }
 
-      function stopSessionPolling() {
-        if (pollingHandle) {
-          clearInterval(pollingHandle);
-          pollingHandle = null;
-        }
-      }
-
-      async function loadProfile() {
-        if (!token) {
-          setCurrentUser(null);
-          stopSessionPolling();
-          sessions = [];
-          renderSessions();
+      async function runAdminSessionAction(action, body, pendingText, confirmationText) {
+        if (confirmationText && !window.confirm(confirmationText)) {
+          setStatus("Admin action cancelled.");
           return;
         }
 
-        const response = await fetch("/api/me", {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        const payload = await response.json();
+        adminCleanupButtonEl.disabled = true;
+        adminStopAllButtonEl.disabled = true;
+        adminRemoveInactiveButtonEl.disabled = true;
+        adminInactiveHoursEl.disabled = true;
+        adminCleanupSummaryEl.textContent = pendingText;
+        setStatus(pendingText);
 
-        if (response.ok) {
-          setCurrentUser(payload.user);
+        try {
+          const response = await fetch(`/api/admin/sessions/${action}`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${token}`,
+            },
+            body: body ? JSON.stringify(body) : "",
+          });
+          const payload = await response.json();
+
+          if (!response.ok) {
+            adminCleanupSummaryEl.textContent = JSON.stringify(payload, null, 2);
+            setStatus(JSON.stringify(payload, null, 2), true);
+            return;
+          }
+
+          const result = payload.result || {};
+          const cleanup = result.cleanup || {};
+          adminCleanupSummaryEl.textContent = [
+            `Action: ${result.action || action}`,
+            `Requested by: ${result.requestedBy || "unknown"}`,
+            `Candidates: ${result.candidateCount ?? "n/a"}`,
+            `Stopped: ${result.stoppedCount ?? 0}`,
+            `Removed: ${result.removedCount ?? 0}`,
+            `Dry run: ${String(Boolean(result.dryRun))}`,
+            `Cleanup removed orphaned containers: ${cleanup.removedOrphanedContainers ?? "n/a"}`,
+          ].join("\n");
+          await refreshSessions();
+          await refreshAdminSessions();
+          setStatus(JSON.stringify(payload, null, 2));
+        } finally {
+          adminCleanupButtonEl.disabled = false;
+          adminStopAllButtonEl.disabled = false;
+          adminRemoveInactiveButtonEl.disabled = false;
+          adminInactiveHoursEl.disabled = false;
         }
-
-        await refreshSessions();
-        startSessionPolling();
       }
-
-      async function loadCatalog() {
-        setStatus("Loading workspace catalog...");
-
-        const response = await fetch("/api/catalog");
-        const payload = await response.json();
-
-        if (!response.ok) {
-          setStatus(JSON.stringify(payload, null, 2), true);
-          distributionEl.innerHTML = '<option value="">Catalog unavailable</option>';
-          desktopEnvironmentEl.innerHTML = '<option value="">Catalog unavailable</option>';
-          instanceSizeEl.innerHTML = '<option value="">Catalog unavailable</option>';
-          return;
-        }
-
-        catalog = payload;
-        populateDistributionOptions();
-        populateInterfaceOptions();
-        populateInstanceSizeOptions();
-
-        setStatus(["Workspace catalog loaded.", "", JSON.stringify(payload, null, 2)].join("\n"));
-      }
-
-      async function authenticate(route) {
-        setStatus(route === "/api/login" ? "Authenticating..." : "Creating account...");
-
-        const response = await fetch(route, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            displayName: displayNameEl.value,
-            username: document.getElementById("username").value,
-            password: document.getElementById("password").value,
-            defaultDesktopEnvironment: desktopEnvironmentEl.value || "xfce",
-          }),
-        });
-
-        const payload = await response.json();
-
-        if (!response.ok) {
-          setStatus(JSON.stringify(payload, null, 2), true);
-          return;
-        }
-
-        token = payload.token;
-        launchButton.disabled = false;
-        await loadProfile();
-        setStatus(JSON.stringify(payload, null, 2));
-      }
-
-      loginButton.addEventListener("click", async () => {
-        await authenticate("/api/login");
-      });
-
-      registerButton.addEventListener("click", async () => {
-        await authenticate("/api/register");
-      });
-
-      launchButton.addEventListener("click", async () => {
-        setStatus("Requesting new desktop session...");
-
-        const response = await fetch("/api/workspaces/launch", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({
-            distributionId: distributionEl.value,
-            interfaceId: desktopEnvironmentEl.value,
-            instanceSizeId: instanceSizeEl.value,
-          }),
-        });
-
-        const payload = await response.json();
-
-        if (!response.ok) {
-          setStatus(JSON.stringify(payload, null, 2), true);
-          return;
-        }
-
-        sessions = [
-          {
-            id: payload.sessionId,
-            name: `${payload.distributionId.toUpperCase()} / ${payload.interfaceId.toUpperCase()}`,
-            label: payload.statusDetail || formatSessionState(payload.state),
-            state: payload.state,
-            url: "",
-            opened: false,
-          },
-          ...sessions,
-        ];
-        renderSessions();
-        refreshSessions().catch(() => {});
-
-        setStatus(["Workspace request accepted.", "", JSON.stringify(payload, null, 2)].join("\n"));
-      });
 
       signInTabEl.addEventListener("click", () => setAuthMode("signin"));
       registerTabEl.addEventListener("click", () => setAuthMode("register"));
+      authFooterActionEl.addEventListener("click", () => {
+        setAuthMode(authMode === "signin" ? "register" : "signin");
+      });
+      loginButtonEl.addEventListener("click", async () => {
+        await authenticate("/api/login");
+      });
+      registerButtonEl.addEventListener("click", async () => {
+        await authenticate("/api/register");
+      });
+      launchButtonEl.addEventListener("click", async () => {
+        await launchSession();
+      });
       distributionEl.addEventListener("change", () => {
         populateInterfaceOptions();
       });
+      profileTriggerEl.addEventListener("click", () => {
+        toggleProfileMenu();
+      });
+      manageProfileButtonEl.addEventListener("click", () => {
+        openProfileModal();
+      });
+      profileSettingsButtonEl.addEventListener("click", () => {
+        openProfileModal();
+      });
+      signOutButtonEl.addEventListener("click", () => {
+        signOut();
+      });
+      adminCleanupButtonEl.addEventListener("click", async () => {
+        await runCleanup();
+      });
+      adminStopAllButtonEl.addEventListener("click", async () => {
+        const summary = summarizeAdminSessions(adminSessions);
+        await runAdminSessionAction(
+          "stop-all",
+          null,
+          "Stopping all active tracked sessions...",
+          `Stop ${summary.active} active tracked session record(s)? This will shut down every currently active workstation managed by the platform.`
+        );
+      });
+      adminRemoveInactiveButtonEl.addEventListener("click", async () => {
+        const olderThanHours = Number(adminInactiveHoursEl.value || "0");
+        const summary = summarizeAdminSessions(adminSessions);
+        await runAdminSessionAction(
+          "remove-inactive",
+          { olderThanHours },
+          "Removing inactive tracked session records...",
+          `Remove inactive session records older than ${olderThanHours} hour(s)? ${summary.removableRecords} record(s) are currently removable.`
+        );
+      });
+      profileModalCloseEl.addEventListener("click", closeProfileModal);
+      profileModalCancelEl.addEventListener("click", closeProfileModal);
+      profileModalSaveEl.addEventListener("click", async () => {
+        await saveProfileSettings();
+      });
+      profileModalBackdropEl.addEventListener("click", (event) => {
+        if (event.target === profileModalBackdropEl) {
+          closeProfileModal();
+        }
+      });
+      document.addEventListener("click", (event) => {
+        if (
+          !profileMenuEl.hidden &&
+          !profileMenuEl.contains(event.target) &&
+          !profileTriggerEl.contains(event.target)
+        ) {
+          closeProfileMenu();
+        }
+      });
 
-      setAuthMode("signin");
-      renderSessions();
-      loadCatalog();
+      async function initializeApplication() {
+        loadStoredAuthState();
+        setAuthMode("signin");
+        renderSessions();
+        renderAdminTools();
+        await loadCatalog();
+
+        if (!token) {
+          showSignedOutView();
+          return;
+        }
+
+        const userLoaded = await loadCurrentUser();
+
+        if (!userLoaded) {
+          signOut();
+          return;
+        }
+
+        renderProfileSummary();
+        renderAdminTools();
+        showSignedInView();
+        launchButtonEl.disabled = false;
+        await refreshSessions();
+        if (isAdmin()) {
+          await refreshAdminSessions();
+        }
+        startSessionPolling();
+      }
+
+      initializeApplication().catch((error) => {
+        setStatus(error.message, true);
+      });
     </script>
   </body>
 </html>

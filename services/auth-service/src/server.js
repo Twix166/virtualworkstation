@@ -55,11 +55,15 @@ function forwardJson(route, method, body) {
 }
 
 function signToken(user) {
+  const role =
+    user.profile?.role || (user.username === "demo" ? "admin" : "user");
   const payload = Buffer.from(
     JSON.stringify({
       sub: user.id,
       username: user.username,
       displayName: user.profile.displayName,
+      role,
+      isAdmin: role === "admin",
       iat: Date.now(),
     })
   ).toString("base64url");
