@@ -4,25 +4,29 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV DISPLAY=:1
 ENV HOME=/home/desktop
 ENV XDG_RUNTIME_DIR=/run/user/1001
+ENV DESKTOP_USER=desktop
+ENV DESKTOP_PASSWORD=desktop
 
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends \
+  && apt-get install -y \
     curl \
     dbus \
     dbus-x11 \
-    gnome-session \
-    gnome-shell \
-    gnome-terminal \
     novnc \
+    sudo \
     supervisor \
     tigervnc-standalone-server \
-    ubuntu-session \
+    ubuntu-desktop \
     websockify \
     xfonts-base \
   && apt-get clean \
   && rm -rf /var/lib/apt/lists/*
 
-RUN useradd --create-home --shell /bin/bash desktop \
+RUN useradd --uid 1001 --create-home --shell /bin/bash "${DESKTOP_USER}" \
+  && echo "${DESKTOP_USER}:${DESKTOP_PASSWORD}" | chpasswd \
+  && usermod -aG sudo "${DESKTOP_USER}" \
+  && printf '%s ALL=(ALL) NOPASSWD:ALL\n' "${DESKTOP_USER}" > /etc/sudoers.d/90-virtualworkstation-desktop \
+  && chmod 0440 /etc/sudoers.d/90-virtualworkstation-desktop \
   && mkdir -p /etc/supervisor/conf.d /home/desktop/.vnc /var/log/supervisor /run/dbus \
   && chown -R desktop:desktop /home/desktop /var/log/supervisor
 

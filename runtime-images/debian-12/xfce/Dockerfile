@@ -1,26 +1,32 @@
-FROM debian:bookworm-slim
+FROM debian:bookworm
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV DISPLAY=:1
 ENV HOME=/home/desktop
+ENV DESKTOP_USER=desktop
+ENV DESKTOP_PASSWORD=desktop
 
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends \
+  && apt-get install -y \
     curl \
     dbus-x11 \
     novnc \
+    sudo \
     supervisor \
+    task-xfce-desktop \
     tigervnc-standalone-server \
     websockify \
-    xfce4 \
-    xfce4-terminal \
     xfonts-base \
   && apt-get clean \
   && rm -rf /var/lib/apt/lists/*
 
-RUN useradd --create-home --shell /bin/bash desktop \
-  && mkdir -p /etc/supervisor/conf.d /home/desktop/.vnc /var/log/supervisor \
-  && chown -R desktop:desktop /home/desktop /var/log/supervisor
+RUN useradd --uid 1001 --create-home --shell /bin/bash "${DESKTOP_USER}" \
+  && echo "${DESKTOP_USER}:${DESKTOP_PASSWORD}" | chpasswd \
+  && usermod -aG sudo "${DESKTOP_USER}" \
+  && printf '%s ALL=(ALL) NOPASSWD:ALL\n' "${DESKTOP_USER}" > /etc/sudoers.d/90-virtualworkstation-desktop \
+  && chmod 0440 /etc/sudoers.d/90-virtualworkstation-desktop \
+  && mkdir -p /etc/supervisor/conf.d "/home/${DESKTOP_USER}/.vnc" /var/log/supervisor \
+  && chown -R "${DESKTOP_USER}:${DESKTOP_USER}" "/home/${DESKTOP_USER}" /var/log/supervisor
 
 COPY desktop-images/xfce/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 COPY desktop-images/xfce/start-vnc.sh /usr/local/bin/start-vnc.sh

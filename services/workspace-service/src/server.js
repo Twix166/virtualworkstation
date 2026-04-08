@@ -2,7 +2,7 @@ const http = require("http");
 const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
-const { execFile } = require("child_process");
+const { execFile, spawn } = require("child_process");
 
 const port = Number(process.env.PORT || 8082);
 const publicBaseUrl = process.env.PUBLIC_BASE_URL || "http://localhost:8080";
@@ -14,8 +14,12 @@ const workspaceCatalogPath =
 const runtimeSourceRoot =
   process.env.RUNTIME_SOURCE_ROOT || path.resolve(__dirname, "../../..");
 const cleanupIntervalMs = Number(process.env.CLEANUP_INTERVAL_MS || 120000);
+const staleProvisioningSessionMs = Number(
+  process.env.STALE_PROVISIONING_SESSION_MS || 5 * 60 * 1000
+);
 let cleanupInProgress = false;
 const imageBuildOperations = new Map();
+let buildxAvailablePromise = null;
 
 function json(res, statusCode, payload) {
   res.writeHead(statusCode, { "Content-Type": "application/json" });
@@ -102,7 +106,7 @@ function forwardJson(route, method, body) {
 
 function execDocker(args) {
   return new Promise((resolve, reject) => {
-    execFile("docker", args, (error, stdout, stderr) => {
+    execFile("docker", args, { maxBuffer: 16 * 1024 * 1024 }, (error, stdout, stderr) => {
       if (error) {
         reject(new Error(stderr || error.message));
         return;
@@ -110,6 +114,146 @@ function execDocker(args) {
       resolve(stdout.trim());
     });
   });
+}
+
+function runDocker(args, options = {}) {
+  return new Promise((resolve, reject) => {
+    const child = spawn("docker", args, {
+      env: {
+        ...process.env,
+        ...(options.env || {}),
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    let stdout = "";
+    let stderr = "";
+    let stdoutBuffer = "";
+    let stderrBuffer = "";
+
+    const appendOutput = (target, chunk) => {
+      const nextValue = (target + chunk.toString("utf8")).slice(-64 * 1024);
+      return nextValue;
+    };
+
+    const emitLines = (streamName, chunk) => {
+      const key = streamName === "stdout" ? "stdoutBuffer" : "stderrBuffer";
+      let buffer = key === "stdoutBuffer" ? stdoutBuffer : stderrBuffer;
+      buffer += chunk.toString("utf8");
+      const lines = buffer.split(/\r?\n/);
+      buffer = lines.pop() || "";
+
+      for (const line of lines) {
+        options.onLine?.(line, streamName);
+      }
+
+      if (key === "stdoutBuffer") {
+        stdoutBuffer = buffer;
+      } else {
+        stderrBuffer = buffer;
+      }
+    };
+
+    child.stdout.on("data", (chunk) => {
+      stdout = appendOutput(stdout, chunk);
+      emitLines("stdout", chunk);
+    });
+
+    child.stderr.on("data", (chunk) => {
+      stderr = appendOutput(stderr, chunk);
+      emitLines("stderr", chunk);
+    });
+
+    child.on("error", (error) => {
+      reject(error);
+    });
+
+    child.on("close", (code) => {
+      if (stdoutBuffer) {
+        options.onLine?.(stdoutBuffer, "stdout");
+      }
+      if (stderrBuffer) {
+        options.onLine?.(stderrBuffer, "stderr");
+      }
+
+      if (code === 0) {
+        resolve({
+          stdout: stdout.trim(),
+          stderr: stderr.trim(),
+        });
+        return;
+      }
+
+      reject(
+        new Error(stderr.trim() || stdout.trim() || `docker ${args[0]} failed with exit code ${code}`)
+      );
+    });
+  });
+}
+
+function mapBuildOutputToStatus(line) {
+  const text = String(line || "").trim();
+
+  if (!text) {
+    return null;
+  }
+
+  if (
+    text.includes("[internal] load metadata for") ||
+    text.includes("load metadata for") ||
+    text.includes("FROM ")
+  ) {
+    return "Resolving base image...";
+  }
+
+  if (
+    text.includes("load build context") ||
+    text.includes("Sending build context to Docker daemon")
+  ) {
+    return "Preparing build context...";
+  }
+
+  if (
+    text.includes("apt-get update") ||
+    text.includes("Reading package lists") ||
+    text.includes("Building dependency tree") ||
+    text.includes("The following NEW packages will be installed") ||
+    text.includes("Need to get ") ||
+    text.includes("Fetched ")
+  ) {
+    return "Installing desktop packages...";
+  }
+
+  if (
+    text.includes("Setting up ") ||
+    text.includes("Selecting previously unselected package")
+  ) {
+    return "Configuring installed packages...";
+  }
+
+  if (
+    text.includes("exporting to image") ||
+    text.includes("naming to ") ||
+    text.includes("unpacking to ")
+  ) {
+    return "Finalizing runtime image...";
+  }
+
+  if (text.includes("DONE")) {
+    return "Finishing image build steps...";
+  }
+
+  return null;
+}
+
+async function isBuildxAvailable() {
+  if (!buildxAvailablePromise) {
+    buildxAvailablePromise = execDocker(["buildx", "version"])
+      .then(() => true)
+      .catch(() => false);
+  }
+
+  return buildxAvailablePromise;
 }
 
 function sleep(ms) {
@@ -213,14 +357,16 @@ async function getImageBuildCacheKey(imageReference) {
   }
 }
 
-async function pullRuntimeImage(targetImage, pullReferences) {
+async function pullRuntimeImage(targetImage, pullReferences, onProgress) {
   const errors = [];
 
   for (const reference of pullReferences || []) {
     try {
+      onProgress?.(`Pulling runtime image from ${reference}...`);
       await execDocker(["pull", reference]);
 
       if (reference !== targetImage) {
+        onProgress?.("Tagging pulled runtime image...");
         await execDocker(["tag", reference, targetImage]);
       }
 
@@ -240,7 +386,7 @@ async function pullRuntimeImage(targetImage, pullReferences) {
   return null;
 }
 
-async function buildRuntimeImageOnce(targetImage, buildSpec) {
+async function buildRuntimeImageOnce(targetImage, buildSpec, onProgress) {
   if (!buildSpec || !buildSpec.dockerfile) {
     throw new Error("No build definition is available for this runtime profile");
   }
@@ -267,7 +413,24 @@ async function buildRuntimeImageOnce(targetImage, buildSpec) {
 
   buildArgs.push(contextPath);
 
-  await execDocker(buildArgs);
+  const useBuildKit = await isBuildxAvailable();
+  onProgress?.(
+    useBuildKit
+      ? "Preparing runtime image with BuildKit..."
+      : "Preparing runtime image with the standard Docker builder..."
+  );
+
+  await runDocker(buildArgs, {
+    env: {
+      DOCKER_BUILDKIT: useBuildKit ? "1" : "0",
+    },
+    onLine: (line) => {
+      const nextStatus = mapBuildOutputToStatus(line);
+      if (nextStatus) {
+        onProgress?.(nextStatus);
+      }
+    },
+  });
 
   return {
     strategy: "build",
@@ -275,7 +438,7 @@ async function buildRuntimeImageOnce(targetImage, buildSpec) {
   };
 }
 
-async function buildRuntimeImage(targetImage, buildSpec) {
+async function buildRuntimeImage(targetImage, buildSpec, onProgress) {
   const existingBuild = imageBuildOperations.get(targetImage);
 
   if (existingBuild) {
@@ -288,7 +451,12 @@ async function buildRuntimeImage(targetImage, buildSpec) {
 
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
       try {
-        return await buildRuntimeImageOnce(targetImage, buildSpec);
+        onProgress?.(
+          attempt === 1
+            ? "Preparing runtime image..."
+            : `Retrying runtime image build (${attempt}/${maxAttempts})...`
+        );
+        return await buildRuntimeImageOnce(targetImage, buildSpec, onProgress);
       } catch (error) {
         lastError = error;
         console.error(
@@ -328,7 +496,7 @@ async function buildRuntimeImage(targetImage, buildSpec) {
   }
 }
 
-async function ensureRuntimeImage(runtimeSpec) {
+async function ensureRuntimeImage(runtimeSpec, onProgress) {
   if (!runtimeSpec.image) {
     throw new Error("Runtime profile is missing an image reference");
   }
@@ -353,18 +521,19 @@ async function ensureRuntimeImage(runtimeSpec) {
     }
 
     if (imageSource.build) {
-      return buildRuntimeImage(runtimeSpec.image, imageSource.build);
+      return buildRuntimeImage(runtimeSpec.image, imageSource.build, onProgress);
     }
   }
 
   if (preferLocalBuild) {
-    return buildRuntimeImage(runtimeSpec.image, imageSource.build);
+    return buildRuntimeImage(runtimeSpec.image, imageSource.build, onProgress);
   }
 
   try {
     const pulledImage = await pullRuntimeImage(
       runtimeSpec.image,
-      imageSource.pullReferences || []
+      imageSource.pullReferences || [],
+      onProgress
     );
 
     if (pulledImage) {
@@ -376,7 +545,7 @@ async function ensureRuntimeImage(runtimeSpec) {
     }
   }
 
-  return buildRuntimeImage(runtimeSpec.image, imageSource.build);
+  return buildRuntimeImage(runtimeSpec.image, imageSource.build, onProgress);
 }
 
 async function launchRuntimeContainer(sessionId, userId, runtimeSpec) {
@@ -618,6 +787,20 @@ function getSessionAgeHours(session) {
   return (Date.now() - createdAt) / (1000 * 60 * 60);
 }
 
+function isStaleProvisioningSession(session) {
+  if (!["building", "launching"].includes(session.state)) {
+    return false;
+  }
+
+  const updatedAt = Date.parse(session.updatedAt || session.createdAt || "");
+
+  if (Number.isNaN(updatedAt)) {
+    return false;
+  }
+
+  return Date.now() - updatedAt >= staleProvisioningSessionMs;
+}
+
 async function stopSessionRecord(session) {
   await updateSession(session.id, {
     state: "stopping",
@@ -664,6 +847,23 @@ async function reconcileSessionContainers() {
     let removedOrphanedContainers = 0;
     let normalizedSessions = 0;
     let activeTrackedContainers = 0;
+
+    for (const session of sessions) {
+      if (!isStaleProvisioningSession(session)) {
+        continue;
+      }
+
+      await removeSessionContainers(session);
+      await updateSession(session.id, {
+        state: "error",
+        statusDetail:
+          "Provisioning timed out. Remove this session and launch a new one.",
+        containerId: null,
+        containerName: null,
+        connection: null,
+      });
+      normalizedSessions += 1;
+    }
 
     for (const container of managedContainers) {
       const session = container.sessionId
@@ -724,12 +924,38 @@ async function reconcileSessionContainers() {
 
 async function provisionSession(sessionId, userId, runtimeSpec) {
   try {
+    let lastProgressMessage = "";
+    let lastProgressAt = 0;
+    const reportBuildProgress = async (message) => {
+      const nextMessage = String(message || "").trim();
+
+      if (!nextMessage) {
+        return;
+      }
+
+      const now = Date.now();
+      if (
+        nextMessage === lastProgressMessage ||
+        now - lastProgressAt < 1500
+      ) {
+        return;
+      }
+
+      lastProgressMessage = nextMessage;
+      lastProgressAt = now;
+
+      await updateSession(sessionId, {
+        state: "building",
+        statusDetail: nextMessage,
+      });
+    };
+
     await updateSession(sessionId, {
       state: "building",
       statusDetail: "Preparing runtime image...",
     });
 
-    const preparedImage = await ensureRuntimeImage(runtimeSpec);
+    const preparedImage = await ensureRuntimeImage(runtimeSpec, reportBuildProgress);
 
     await updateSession(sessionId, {
       state: "launching",

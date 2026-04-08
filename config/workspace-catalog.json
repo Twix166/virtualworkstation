@@ -91,7 +91,7 @@
         "build": {
           "context": ".",
           "dockerfile": "runtime-images/xubuntu-24.04/xfce/Dockerfile",
-          "cacheKey": "2026-04-07-xubuntu-xfce-v1"
+          "cacheKey": "2026-04-07-xubuntu-xfce-v2-full-desktop"
         }
       },
       "launch": {
@@ -112,7 +112,7 @@
         "build": {
           "context": ".",
           "dockerfile": "runtime-images/ubuntu-24.04/gnome/Dockerfile",
-          "cacheKey": "2026-04-07-ubuntu-gnome-v3"
+          "cacheKey": "2026-04-07-ubuntu-gnome-v4-full-desktop"
         }
       },
       "launch": {
@@ -154,7 +154,7 @@
         "build": {
           "context": ".",
           "dockerfile": "runtime-images/debian-12/xfce/Dockerfile",
-          "cacheKey": "2026-04-07-debian-xfce-v1"
+          "cacheKey": "2026-04-07-debian-xfce-v2-full-desktop"
         }
       },
       "launch": {

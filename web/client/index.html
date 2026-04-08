@@ -998,6 +998,109 @@
         statusEl.classList.toggle("error", Boolean(isError));
       }
 
+      function formatErrorMessage(payload, fallbackMessage = "Request failed.") {
+        if (!payload) {
+          return fallbackMessage;
+        }
+
+        const lines = [payload.error || fallbackMessage];
+
+        if (payload.detail) {
+          lines.push(payload.detail);
+        }
+
+        return lines.join("\n");
+      }
+
+      function formatLaunchSummary(payload) {
+        return [
+          "Session request accepted.",
+          `Session: ${getSessionName(payload)}`,
+          `State: ${formatSessionState(payload.state)}`,
+          `Size: ${findInstanceSize(payload.instanceSizeId)?.name || payload.instanceSizeId || "Unknown"}`,
+          payload.statusDetail ? `Details: ${payload.statusDetail}` : "",
+          payload.runtimePlan?.protocol ? `Access: ${String(payload.runtimePlan.protocol).toUpperCase()}` : "",
+          payload.runtimePlan?.launchOrigin ? `Control plane: ${payload.runtimePlan.launchOrigin}` : "",
+        ]
+          .filter(Boolean)
+          .join("\n");
+      }
+
+      function formatAuthSummary(payload, mode) {
+        return [
+          mode === "register" ? "Account created successfully." : "Signed in successfully.",
+          payload.user?.profile?.displayName ? `User: ${payload.user.profile.displayName}` : "",
+          payload.user?.username ? `Username: @${payload.user.username}` : "",
+          payload.user?.profile?.preferences?.defaultDesktopEnvironment
+            ? `Default interface: ${
+                findInterface(payload.user.profile.preferences.defaultDesktopEnvironment)?.name ||
+                payload.user.profile.preferences.defaultDesktopEnvironment
+              }`
+            : "",
+        ]
+          .filter(Boolean)
+          .join("\n");
+      }
+
+      function formatProfileSummary(user) {
+        return [
+          "Profile updated.",
+          user?.profile?.displayName ? `Display name: ${user.profile.displayName}` : "",
+          user?.username ? `Username: @${user.username}` : "",
+          user?.profile?.preferences?.defaultDesktopEnvironment
+            ? `Default interface: ${
+                findInterface(user.profile.preferences.defaultDesktopEnvironment)?.name ||
+                user.profile.preferences.defaultDesktopEnvironment
+              }`
+            : "",
+        ]
+          .filter(Boolean)
+          .join("\n");
+      }
+
+      function formatSessionActionSummary(actionLabel, payload) {
+        const session = payload?.session || {};
+
+        return [
+          actionLabel,
+          session.id ? `Session ID: ${session.id}` : "",
+          session.state ? `State: ${formatSessionState(session.state)}` : "",
+          session.statusDetail ? `Details: ${session.statusDetail}` : "",
+          session.connection?.url ? `URL: ${session.connection.url}` : "",
+        ]
+          .filter(Boolean)
+          .join("\n");
+      }
+
+      function formatCleanupStatus(payload) {
+        const cleanup = payload?.cleanup || {};
+
+        return [
+          "Backend cleanup completed.",
+          `Tracked records: ${cleanup.totalSessions ?? "n/a"}`,
+          `Live containers: ${cleanup.activeTrackedContainers ?? "n/a"}`,
+          `Removed orphaned containers: ${cleanup.removedOrphanedContainers ?? "n/a"}`,
+          `Normalized records: ${cleanup.normalizedSessions ?? "n/a"}`,
+        ].join("\n");
+      }
+
+      function formatAdminActionStatus(payload, action) {
+        const result = payload?.result || {};
+
+        return [
+          `Admin action completed: ${result.action || action}`,
+          `Candidates: ${result.candidateCount ?? "n/a"}`,
+          `Stopped: ${result.stoppedCount ?? 0}`,
+          `Removed: ${result.removedCount ?? 0}`,
+          `Dry run: ${String(Boolean(result.dryRun))}`,
+          result.olderThanHours !== undefined && result.olderThanHours !== null
+            ? `Older than hours: ${result.olderThanHours}`
+            : "",
+        ]
+          .filter(Boolean)
+          .join("\n");
+      }
+
       function setAuthMessage(value, isError = false) {
         authMessageEl.textContent = value || "";
         authMessageEl.classList.toggle("error", Boolean(isError));
@@ -1408,7 +1511,7 @@
         const payload = await response.json();
 
         if (!response.ok) {
-          setStatus(JSON.stringify(payload, null, 2), true);
+          setStatus(formatErrorMessage(payload, "Unable to load workspace catalog."), true);
           launchButtonEl.disabled = true;
           return;
         }
@@ -1582,7 +1685,7 @@
         const payload = await response.json();
 
         if (!response.ok) {
-          setAuthMessage(payload.error || JSON.stringify(payload), true);
+          setAuthMessage(formatErrorMessage(payload, "Unable to authenticate."), true);
           return;
         }
 
@@ -1602,7 +1705,7 @@
         }
         startSessionPolling();
         setAuthMessage("");
-        setStatus(JSON.stringify(payload, null, 2));
+        setStatus(formatAuthSummary(payload, route === "/api/register" ? "register" : "login"));
       }
 
       async function saveProfileSettings() {
@@ -1628,7 +1731,7 @@
         const payload = await response.json();
 
         if (!response.ok) {
-          setModalMessage(payload.error || JSON.stringify(payload), true);
+          setModalMessage(formatErrorMessage(payload, "Unable to update profile."), true);
           return;
         }
 
@@ -1637,7 +1740,7 @@
         renderProfileSummary();
         populateInterfaceOptions();
         setModalMessage("Profile updated.");
-        setStatus(JSON.stringify(payload, null, 2));
+        setStatus(formatProfileSummary(payload.user));
         setTimeout(() => {
           closeProfileModal();
         }, 500);
@@ -1661,7 +1764,7 @@
         const payload = await response.json();
 
         if (!response.ok) {
-          setStatus(JSON.stringify(payload, null, 2), true);
+          setStatus(formatErrorMessage(payload, "Unable to launch session."), true);
           return;
         }
 
@@ -1677,7 +1780,7 @@
         ];
         renderSessions();
         refreshSessions().catch(() => {});
-        setStatus(JSON.stringify(payload, null, 2));
+        setStatus(formatLaunchSummary(payload));
       }
 
       async function openSession(sessionId) {
@@ -1716,7 +1819,7 @@
           const payload = await response.json();
 
           if (!response.ok) {
-            setStatus(JSON.stringify(payload, null, 2), true);
+            setStatus(formatErrorMessage(payload, "Unable to stop session."), true);
             return;
           }
 
@@ -1724,7 +1827,7 @@
           if (isAdmin()) {
             await refreshAdminSessions();
           }
-          setStatus(JSON.stringify(payload, null, 2));
+          setStatus(formatSessionActionSummary("Session stopped.", payload));
         } finally {
           sessionActionInFlight.delete(`${sessionId}:stop`);
           renderSessions();
@@ -1746,7 +1849,7 @@
           const payload = await response.json();
 
           if (!response.ok) {
-            setStatus(JSON.stringify(payload, null, 2), true);
+            setStatus(formatErrorMessage(payload, "Unable to remove session."), true);
             return;
           }
 
@@ -1755,7 +1858,7 @@
           if (isAdmin()) {
             await refreshAdminSessions();
           }
-          setStatus(JSON.stringify(payload, null, 2));
+          setStatus("Session removed.");
         } finally {
           sessionActionInFlight.delete(`${sessionId}:remove`);
           renderSessions();
@@ -1781,7 +1884,7 @@
 
           if (!response.ok) {
             adminCleanupSummaryEl.textContent = JSON.stringify(payload, null, 2);
-            setStatus(JSON.stringify(payload, null, 2), true);
+            setStatus(formatErrorMessage(payload, "Unable to run backend cleanup."), true);
             return;
           }
 
@@ -1795,7 +1898,7 @@
             `Normalized records: ${cleanup.normalizedSessions ?? "n/a"}`,
           ].join("\n");
           await refreshAdminSessions();
-          setStatus(JSON.stringify(payload, null, 2));
+          setStatus(formatCleanupStatus(payload));
         } finally {
           adminCleanupButtonEl.disabled = false;
           adminStopAllButtonEl.disabled = false;
@@ -1830,7 +1933,7 @@
 
           if (!response.ok) {
             adminCleanupSummaryEl.textContent = JSON.stringify(payload, null, 2);
-            setStatus(JSON.stringify(payload, null, 2), true);
+            setStatus(formatErrorMessage(payload, "Unable to complete admin action."), true);
             return;
           }
 
@@ -1847,7 +1950,7 @@
           ].join("\n");
           await refreshSessions();
           await refreshAdminSessions();
-          setStatus(JSON.stringify(payload, null, 2));
+          setStatus(formatAdminActionStatus(payload, action));
         } finally {
           adminCleanupButtonEl.disabled = false;
           adminStopAllButtonEl.disabled = false;
