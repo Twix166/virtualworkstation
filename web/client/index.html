@@ -849,6 +849,43 @@
                 </select>
               </div>
 
+              <div id="installConfigPanel" class="hidden">
+                <div class="card-heading">
+                  <div>
+                    <h3>Install Configuration</h3>
+                    <p>Used for unattended VM installs so locale and keyboard prompts do not block setup.</p>
+                  </div>
+                </div>
+
+                <div class="field-grid">
+                  <div>
+                    <label for="installLocale">Locale</label>
+                    <select id="installLocale">
+                      <option value="">Loading locales...</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label for="installKeyboardLayout">Keyboard layout</label>
+                    <select id="installKeyboardLayout">
+                      <option value="">Loading layouts...</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label for="installTimezone">Timezone</label>
+                    <select id="installTimezone">
+                      <option value="">Loading timezones...</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label for="installHostname">Hostname</label>
+                    <input id="installHostname" placeholder="vm-demo" />
+                  </div>
+                </div>
+              </div>
+
               <div class="launch-actions">
                 <button id="launchButton" class="primary-button" type="button" disabled>
                   Start New Session
@@ -963,6 +1000,11 @@
       const distributionEl = document.getElementById("distribution");
       const desktopEnvironmentEl = document.getElementById("desktopEnvironment");
       const instanceSizeEl = document.getElementById("instanceSize");
+      const installConfigPanelEl = document.getElementById("installConfigPanel");
+      const installLocaleEl = document.getElementById("installLocale");
+      const installKeyboardLayoutEl = document.getElementById("installKeyboardLayout");
+      const installTimezoneEl = document.getElementById("installTimezone");
+      const installHostnameEl = document.getElementById("installHostname");
       const sessionListEl = document.getElementById("sessionList");
       const statusEl = document.getElementById("status");
       const profileTriggerEl = document.getElementById("profileTrigger");
@@ -1600,6 +1642,48 @@
           "";
       }
 
+      function shouldShowInstallConfig() {
+        return machineTypeEl.value === "virtual-machine";
+      }
+
+      function populateInstallConfigOptions() {
+        const installOptions = catalog.installOptions || {};
+        const defaultInstallConfig = catalog.policies?.defaultInstallConfig || {};
+
+        installLocaleEl.innerHTML = (installOptions.locales || [])
+          .map((entry) => `<option value="${entry.id}">${entry.name}</option>`)
+          .join("");
+        installKeyboardLayoutEl.innerHTML = (installOptions.keyboardLayouts || [])
+          .map((entry) => `<option value="${entry.id}">${entry.name}</option>`)
+          .join("");
+        installTimezoneEl.innerHTML = (installOptions.timezones || [])
+          .map((entry) => `<option value="${entry.id}">${entry.name}</option>`)
+          .join("");
+
+        installLocaleEl.value =
+          defaultInstallConfig.locale ||
+          (installOptions.locales || []).find((entry) => entry.default)?.id ||
+          installOptions.locales?.[0]?.id ||
+          "";
+        installKeyboardLayoutEl.value =
+          defaultInstallConfig.keyboardLayout ||
+          (installOptions.keyboardLayouts || []).find((entry) => entry.default)?.id ||
+          installOptions.keyboardLayouts?.[0]?.id ||
+          "";
+        installTimezoneEl.value =
+          defaultInstallConfig.timezone ||
+          (installOptions.timezones || []).find((entry) => entry.default)?.id ||
+          installOptions.timezones?.[0]?.id ||
+          "";
+
+        const currentUsername = currentUser?.username || currentIdentity?.username || "demo";
+        installHostnameEl.value = `vw-${currentUsername}`.toLowerCase().replace(/[^a-z0-9-]/g, "-");
+      }
+
+      function syncInstallConfigVisibility() {
+        installConfigPanelEl.classList.toggle("hidden", !shouldShowInstallConfig());
+      }
+
       async function loadCatalog() {
         setStatus("Loading workspace catalog...");
 
@@ -1618,6 +1702,8 @@
         populateDistributionOptions();
         populateInterfaceOptions();
         populateInstanceSizeOptions();
+        populateInstallConfigOptions();
+        syncInstallConfigVisibility();
         settingsDefaultInterfaceEl.value =
           currentUser?.profile?.preferences?.defaultDesktopEnvironment || "xfce";
         launchButtonEl.disabled = !token;
@@ -1827,6 +1913,12 @@
             distributionId: distributionEl.value,
             interfaceId: desktopEnvironmentEl.value,
             instanceSizeId: instanceSizeEl.value,
+            installConfig: {
+              locale: installLocaleEl.value,
+              keyboardLayout: installKeyboardLayoutEl.value,
+              timezone: installTimezoneEl.value,
+              hostname: installHostnameEl.value,
+            },
           }),
         });
         const payload = await response.json();
@@ -1969,6 +2061,7 @@
       });
       machineTypeEl.addEventListener("change", () => {
         populateProviderOptions();
+        syncInstallConfigVisibility();
       });
       distributionEl.addEventListener("change", () => {
         populateInterfaceOptions();

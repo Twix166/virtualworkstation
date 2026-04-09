@@ -304,7 +304,51 @@ function resolveCatalogSelections(catalog, request) {
   };
 }
 
-function buildRuntimeSpec(selection) {
+function pickDefaultOptionId(options) {
+  return (
+    (options || []).find((entry) => entry.default)?.id ||
+    (options || [])[0]?.id ||
+    ""
+  );
+}
+
+function resolveInstallConfig(catalog, request, identity) {
+  const installOptions = catalog.installOptions || {};
+  const defaultInstallConfig = catalog.policies?.defaultInstallConfig || {};
+  const locale =
+    request.installConfig?.locale ||
+    defaultInstallConfig.locale ||
+    pickDefaultOptionId(installOptions.locales);
+  const keyboardLayout =
+    request.installConfig?.keyboardLayout ||
+    defaultInstallConfig.keyboardLayout ||
+    pickDefaultOptionId(installOptions.keyboardLayouts);
+  const timezone =
+    request.installConfig?.timezone ||
+    defaultInstallConfig.timezone ||
+    pickDefaultOptionId(installOptions.timezones);
+  const hostnameInput =
+    request.installConfig?.hostname ||
+    `vw-${String(identity?.username || "session")
+      .toLowerCase()
+      .replace(/[^a-z0-9-]/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 24)}`;
+  const hostname = hostnameInput
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 63);
+
+  return {
+    locale,
+    keyboardLayout,
+    timezone,
+    hostname: hostname || "virtualworkstation",
+  };
+}
+
+function buildRuntimeSpec(selection, installConfig = null) {
   return {
     profileId: selection.runtimeProfile.id,
     distributionId: selection.distribution.id,
@@ -319,6 +363,7 @@ function buildRuntimeSpec(selection) {
       exposedPort: selection.runtimeProfile.launch.exposedPort,
       connectionPath: selection.runtimeProfile.launch.connectionPath,
     },
+    installConfig,
   };
 }
 
@@ -554,17 +599,28 @@ async function resolveProxmoxInstallerIsoVolid(provider, runtimeSpec) {
   return matched.volid;
 }
 
-function buildAutoinstallMetaData(sessionId) {
-  return `instance-id: ${sessionId}\nlocal-hostname: virtualworkstation\n`;
+function buildAutoinstallMetaData(sessionId, runtimeSpec) {
+  const hostname = runtimeSpec?.installConfig?.hostname || "virtualworkstation";
+  return `instance-id: ${sessionId}\nlocal-hostname: ${hostname}\n`;
 }
 
 function buildAutoinstallUserData(sessionId, runtimeSpec, provider) {
   const vmUsername = getProviderConfigValue(provider, "vmUsername") || "demo";
   const vmPassword = getProviderConfigValue(provider, "vmPassword") || "demo";
-  const timezone = getProviderConfigValue(provider, "timezone") || "Europe/London";
-  const keyboardLayout = getProviderConfigValue(provider, "keyboardLayout") || "gb";
-  const locale = getProviderConfigValue(provider, "locale") || "en_GB.UTF-8";
-  const hostname = `vw-${sessionId.slice(0, 8)}`;
+  const installConfig = runtimeSpec?.installConfig || {};
+  const timezone =
+    installConfig.timezone ||
+    getProviderConfigValue(provider, "timezone") ||
+    "Europe/London";
+  const keyboardLayout =
+    installConfig.keyboardLayout ||
+    getProviderConfigValue(provider, "keyboardLayout") ||
+    "gb";
+  const locale =
+    installConfig.locale ||
+    getProviderConfigValue(provider, "locale") ||
+    "en_GB.UTF-8";
+  const hostname = installConfig.hostname || `vw-${sessionId.slice(0, 8)}`;
   const xubuntuTarget =
     runtimeSpec.distributionId === "xubuntu-24.04"
       ? "xubuntu-desktop"
@@ -575,6 +631,7 @@ function buildAutoinstallUserData(sessionId, runtimeSpec, provider) {
   return `#cloud-config
 autoinstall:
   version: 1
+  interactive-sections: []
   locale: ${locale}
   refresh-installer:
     update: true
@@ -1880,7 +1937,7 @@ const server = http.createServer(async (req, res) => {
       console.log(`served install seed ${kind} for session ${sessionId}`);
 
       if (kind === "meta-data") {
-        text(res, 200, buildAutoinstallMetaData(sessionId));
+        text(res, 200, buildAutoinstallMetaData(sessionId, session.resolvedRuntimeSpec));
         return;
       }
 
@@ -1909,6 +1966,7 @@ const server = http.createServer(async (req, res) => {
         distributions: catalog.distributions || [],
         interfaces: catalog.interfaces || [],
         instanceSizes: catalog.instanceSizes || [],
+        installOptions: catalog.installOptions || {},
         runtimeProfiles: catalog.runtimeProfiles || [],
         policies: {
           defaultMachineTypeId:
@@ -2155,8 +2213,9 @@ const server = http.createServer(async (req, res) => {
 
     try {
       const sessionId = crypto.randomUUID();
-      const runtimeSpec = buildRuntimeSpec(selection);
-      const internalRuntimeSpec = buildRuntimeSpec(selection);
+      const installConfig = resolveInstallConfig(catalog, request, identity);
+      const runtimeSpec = buildRuntimeSpec(selection, installConfig);
+      const internalRuntimeSpec = buildRuntimeSpec(selection, installConfig);
       const initialStatusDetail =
         providerSelection.provider.driver === "proxmox"
           ? "Preparing Proxmox virtual machine..."
@@ -2185,6 +2244,7 @@ const server = http.createServer(async (req, res) => {
           instanceSizeId: selection.instanceSize.id,
           machineTypeId: providerSelection.machineType.id,
           providerId: providerSelection.provider.id,
+          installConfig,
           profileId: selection.runtimeProfile.id,
           state: "building",
           statusDetail: initialStatusDetail,
@@ -2233,6 +2293,7 @@ const server = http.createServer(async (req, res) => {
         instanceSizeId: selection.instanceSize.id,
         machineTypeId: providerSelection.machineType.id,
         providerId: providerSelection.provider.id,
+        installConfig,
         desktopEnvironment: selection.runtimeInterface.id,
         connection: null,
         runtimePlan: {
