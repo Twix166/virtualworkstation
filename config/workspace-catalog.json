@@ -1,5 +1,20 @@
 {
-  "version": 3,
+  "version": 4,
+  "machineTypes": [
+    {
+      "id": "container",
+      "name": "Docker Image",
+      "kind": "container",
+      "description": "Launch a container-backed runtime on the platform host.",
+      "default": true
+    },
+    {
+      "id": "virtual-machine",
+      "name": "Virtual Machine",
+      "kind": "virtual-machine",
+      "description": "Launch a KVM-backed virtual machine through a provider plugin."
+    }
+  ],
   "distributions": [
     {
       "id": "xubuntu-24.04",
@@ -91,7 +106,7 @@
         "build": {
           "context": ".",
           "dockerfile": "runtime-images/xubuntu-24.04/xfce/Dockerfile",
-          "cacheKey": "2026-04-07-xubuntu-xfce-v2-full-desktop"
+          "cacheKey": "2026-04-08-xubuntu-xfce-v5-browser"
         }
       },
       "launch": {
@@ -112,7 +127,7 @@
         "build": {
           "context": ".",
           "dockerfile": "runtime-images/ubuntu-24.04/gnome/Dockerfile",
-          "cacheKey": "2026-04-07-ubuntu-gnome-v4-full-desktop"
+          "cacheKey": "2026-04-08-ubuntu-gnome-v5-browser"
         }
       },
       "launch": {
@@ -154,7 +169,7 @@
         "build": {
           "context": ".",
           "dockerfile": "runtime-images/debian-12/xfce/Dockerfile",
-          "cacheKey": "2026-04-07-debian-xfce-v2-full-desktop"
+          "cacheKey": "2026-04-08-debian-xfce-v3-browser"
         }
       },
       "launch": {
@@ -186,6 +201,7 @@
     }
   ],
   "policies": {
+    "defaultMachineTypeId": "container",
     "defaultDistributionId": "xubuntu-24.04",
     "defaultInterfaceId": "xfce",
     "defaultInstanceSizeId": "small"

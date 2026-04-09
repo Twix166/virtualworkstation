@@ -1,0 +1,525 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Virtual Workstation Admin</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f3f5f7;
+        --panel: #ffffff;
+        --ink: #16202a;
+        --muted: #5d6975;
+        --line: #d8dee5;
+        --accent: #0f766e;
+        --accent-strong: #115e59;
+        --danger: #b42318;
+      }
+
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+        background: linear-gradient(180deg, #eef4f4 0%, var(--bg) 100%);
+        color: var(--ink);
+      }
+      .wrap { max-width: 1220px; margin: 0 auto; padding: 32px 20px 48px; }
+      .header {
+        display: flex;
+        justify-content: space-between;
+        gap: 24px;
+        align-items: flex-start;
+        margin-bottom: 24px;
+      }
+      .header h1 { margin: 0 0 8px; font-size: 32px; }
+      .header p { margin: 0; color: var(--muted); max-width: 760px; line-height: 1.5; }
+      .actions { display: flex; gap: 12px; flex-wrap: wrap; }
+      .button, button {
+        border: 0;
+        border-radius: 12px;
+        padding: 12px 16px;
+        font: inherit;
+        cursor: pointer;
+      }
+      .primary { background: var(--accent); color: #fff; }
+      .primary:hover { background: var(--accent-strong); }
+      .secondary { background: #e6f1f0; color: #124743; }
+      .danger { background: #fdecec; color: var(--danger); }
+      .grid {
+        display: grid;
+        grid-template-columns: 1.2fr 0.8fr;
+        gap: 20px;
+      }
+      .panel {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        padding: 20px;
+        box-shadow: 0 18px 40px rgba(28, 43, 58, 0.06);
+      }
+      .panel h2 { margin: 0 0 8px; font-size: 21px; }
+      .panel p { margin: 0 0 16px; color: var(--muted); line-height: 1.5; }
+      .provider-list {
+        display: grid;
+        gap: 16px;
+      }
+      .provider-card {
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        padding: 16px;
+        background: #fcfdfd;
+      }
+      .provider-header {
+        display: flex;
+        justify-content: space-between;
+        gap: 16px;
+        align-items: flex-start;
+        margin-bottom: 12px;
+      }
+      .provider-title { margin: 0; font-size: 18px; }
+      .provider-meta { margin-top: 4px; color: var(--muted); font-size: 14px; }
+      .badge {
+        display: inline-block;
+        padding: 6px 10px;
+        border-radius: 999px;
+        background: #eaf3ff;
+        color: #184b95;
+        font-size: 12px;
+        font-weight: 600;
+      }
+      .provider-form {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 12px 14px;
+      }
+      .field { display: grid; gap: 6px; }
+      .field.full { grid-column: 1 / -1; }
+      label { font-size: 13px; font-weight: 600; color: #314151; }
+      input, textarea, select {
+        width: 100%;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 10px 12px;
+        font: inherit;
+        background: #fff;
+      }
+      textarea { min-height: 92px; resize: vertical; }
+      .checks {
+        display: flex;
+        gap: 18px;
+        flex-wrap: wrap;
+        margin-top: 4px;
+      }
+      .check {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        color: #314151;
+      }
+      .provider-actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 10px;
+        margin-top: 14px;
+      }
+      .status-box, pre {
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        background: #f9fbfc;
+        padding: 14px;
+        margin: 0;
+        white-space: pre-wrap;
+        word-break: break-word;
+        font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      }
+      .session-summary {
+        display: grid;
+        gap: 10px;
+        margin-bottom: 14px;
+      }
+      .summary-row {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        padding-bottom: 10px;
+        border-bottom: 1px solid #edf1f3;
+      }
+      .summary-row:last-child { border-bottom: 0; padding-bottom: 0; }
+      .summary-row strong { font-size: 20px; }
+      .inline-actions { display: flex; gap: 10px; flex-wrap: wrap; margin: 14px 0; }
+      .auth-warning {
+        max-width: 640px;
+        margin: 10vh auto 0;
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        padding: 28px;
+        text-align: center;
+      }
+      .hidden { display: none !important; }
+      @media (max-width: 960px) {
+        .grid { grid-template-columns: 1fr; }
+        .provider-form { grid-template-columns: 1fr; }
+        .header { flex-direction: column; }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="authWarning" class="auth-warning hidden">
+      <h1>Admin access required</h1>
+      <p>Sign in with an administrative account in the main application, then return here.</p>
+      <div class="actions" style="justify-content:center; margin-top: 16px;">
+        <button id="goToAppButton" class="primary" type="button">Open Application</button>
+      </div>
+    </div>
+
+    <div id="adminApp" class="wrap hidden">
+      <header class="header">
+        <div>
+          <h1>Admin Console</h1>
+          <p>
+            Configure execution providers for Docker, local KVM, and Proxmox-backed virtual
+            machines. This console also handles session cleanup and fleet-level maintenance.
+          </p>
+        </div>
+        <div class="actions">
+          <button id="backToAppButton" class="secondary" type="button">Back to Application</button>
+          <button id="reloadButton" class="primary" type="button">Reload Admin Data</button>
+        </div>
+      </header>
+
+      <section class="grid">
+        <div class="panel">
+          <h2>Machine Providers</h2>
+          <p>Enable or disable execution backends and store the connection details each provider needs.</p>
+          <div id="providerList" class="provider-list"></div>
+        </div>
+
+        <div style="display:grid; gap:20px;">
+          <div class="panel">
+            <h2>Platform Operations</h2>
+            <p>Run maintenance actions against tracked sessions and backend containers.</p>
+            <div class="inline-actions">
+              <button id="cleanupButton" class="secondary" type="button">Run Cleanup Now</button>
+              <button id="stopAllButton" class="secondary" type="button">Stop All Active Sessions</button>
+              <button id="removeInactiveButton" class="danger" type="button">Remove Inactive Sessions</button>
+            </div>
+            <div class="field">
+              <label for="olderThanHours">Inactive record threshold in hours</label>
+              <input id="olderThanHours" type="number" min="0" step="1" value="24" />
+            </div>
+            <pre id="operationStatus" class="status-box">Administrative actions are ready.</pre>
+          </div>
+
+          <div class="panel">
+            <h2>Session Inventory</h2>
+            <p>High-level counts from the current persisted session inventory.</p>
+            <div id="sessionSummary" class="session-summary"></div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <script>
+      const TOKEN_STORAGE_KEY = "virtualworkstation.token";
+      const USER_STORAGE_KEY = "virtualworkstation.user";
+
+      const authWarningEl = document.getElementById("authWarning");
+      const adminAppEl = document.getElementById("adminApp");
+      const providerListEl = document.getElementById("providerList");
+      const sessionSummaryEl = document.getElementById("sessionSummary");
+      const operationStatusEl = document.getElementById("operationStatus");
+      const olderThanHoursEl = document.getElementById("olderThanHours");
+      const reloadButtonEl = document.getElementById("reloadButton");
+      const cleanupButtonEl = document.getElementById("cleanupButton");
+      const stopAllButtonEl = document.getElementById("stopAllButton");
+      const removeInactiveButtonEl = document.getElementById("removeInactiveButton");
+      const backToAppButtonEl = document.getElementById("backToAppButton");
+      const goToAppButtonEl = document.getElementById("goToAppButton");
+
+      let token = null;
+      let currentIdentity = null;
+      let providers = [];
+      let adminSessions = [];
+
+      function decodeTokenPayload(tokenValue) {
+        if (!tokenValue) {
+          return null;
+        }
+
+        const [payload] = tokenValue.split(".");
+
+        if (!payload) {
+          return null;
+        }
+
+        try {
+          return JSON.parse(atob(payload.replace(/-/g, "+").replace(/_/g, "/")));
+        } catch (error) {
+          return null;
+        }
+      }
+
+      function isAdmin() {
+        return Boolean(
+          currentIdentity &&
+            (currentIdentity.isAdmin ||
+              currentIdentity.role === "admin" ||
+              currentIdentity.username === "demo")
+        );
+      }
+
+      function setOperationStatus(value) {
+        operationStatusEl.textContent = value;
+      }
+
+      function summarizeSessions(entries) {
+        return {
+          total: entries.length,
+          ready: entries.filter((entry) => ["ready", "running"].includes(entry.state)).length,
+          active: entries.filter((entry) => ["ready", "running", "building", "launching"].includes(entry.state)).length,
+          inactive: entries.filter((entry) => ["stopped", "error"].includes(entry.state)).length,
+          vmRequests: entries.filter((entry) => entry.machineTypeId === "virtual-machine").length,
+        };
+      }
+
+      function renderSessionSummary() {
+        const summary = summarizeSessions(adminSessions);
+        sessionSummaryEl.innerHTML = [
+          ["Tracked session records", summary.total],
+          ["Active session records", summary.active],
+          ["Ready records", summary.ready],
+          ["Inactive records", summary.inactive],
+          ["VM-backed requests", summary.vmRequests],
+        ]
+          .map(
+            ([label, value]) => `
+              <div class="summary-row">
+                <span>${label}</span>
+                <strong>${value}</strong>
+              </div>
+            `
+          )
+          .join("");
+      }
+
+      function providerFields(provider) {
+        const config = provider.config || {};
+
+        return Object.entries(config)
+          .map(([key, value]) => {
+            const safeValue =
+              typeof value === "boolean" ? "" : String(value === null || value === undefined ? "" : value);
+
+            if (typeof value === "boolean") {
+              return `
+                <label class="check">
+                  <input type="checkbox" data-provider-config="${key}" ${value ? "checked" : ""} />
+                  <span>${key}</span>
+                </label>
+              `;
+            }
+
+            const inputType = key.toLowerCase().includes("secret") ? "password" : "text";
+            return `
+              <div class="field">
+                <label>${key}</label>
+                <input type="${inputType}" data-provider-config="${key}" value="${safeValue.replace(/"/g, "&quot;")}" />
+              </div>
+            `;
+          })
+          .join("");
+      }
+
+      function renderProviders() {
+        if (providers.length === 0) {
+          providerListEl.innerHTML = `<div class="status-box">No providers are configured.</div>`;
+          return;
+        }
+
+        providerListEl.innerHTML = providers
+          .map(
+            (provider) => `
+              <article class="provider-card" data-provider-id="${provider.id}">
+                <div class="provider-header">
+                  <div>
+                    <h3 class="provider-title">${provider.name}</h3>
+                    <div class="provider-meta">${provider.description || "No description set."}</div>
+                    <div class="provider-meta">${provider.driver} • ${provider.kind} • ${provider.scope}</div>
+                  </div>
+                  <span class="badge">${provider.enabled ? "Enabled" : "Disabled"}</span>
+                </div>
+                <div class="provider-form">
+                  <div class="field full">
+                    <label>Name</label>
+                    <input data-provider-name value="${provider.name.replace(/"/g, "&quot;")}" />
+                  </div>
+                  <div class="field full">
+                    <label>Description</label>
+                    <textarea data-provider-description>${provider.description || ""}</textarea>
+                  </div>
+                  <div class="field full">
+                    <div class="checks">
+                      <label class="check">
+                        <input type="checkbox" data-provider-enabled ${provider.enabled ? "checked" : ""} />
+                        <span>Enabled</span>
+                      </label>
+                      <label class="check">
+                        <input type="checkbox" data-provider-default ${provider.default ? "checked" : ""} />
+                        <span>Default for ${provider.kind}</span>
+                      </label>
+                    </div>
+                  </div>
+                  ${providerFields(provider)}
+                </div>
+                <div class="provider-actions">
+                  <button class="primary" type="button" data-save-provider="${provider.id}">Save Provider</button>
+                </div>
+              </article>
+            `
+          )
+          .join("");
+
+        for (const button of providerListEl.querySelectorAll("[data-save-provider]")) {
+          button.addEventListener("click", async () => {
+            await saveProvider(button.dataset.saveProvider);
+          });
+        }
+      }
+
+      async function api(path, options = {}) {
+        const response = await fetch(path, {
+          ...options,
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+            ...(options.headers || {}),
+          },
+        });
+        const payload = await response.json();
+
+        if (!response.ok) {
+          throw new Error(payload.detail || payload.error || "Request failed");
+        }
+
+        return payload;
+      }
+
+      async function loadProviders() {
+        const payload = await api("/api/admin/providers");
+        providers = payload.providers || [];
+        renderProviders();
+      }
+
+      async function loadSessions() {
+        const payload = await api("/api/admin/sessions");
+        adminSessions = payload.sessions || [];
+        renderSessionSummary();
+      }
+
+      async function saveProvider(providerId) {
+        const card = providerListEl.querySelector(`[data-provider-id="${providerId}"]`);
+
+        if (!card) {
+          return;
+        }
+
+        const config = {};
+
+        for (const field of card.querySelectorAll("[data-provider-config]")) {
+          const key = field.dataset.providerConfig;
+          config[key] = field.type === "checkbox" ? field.checked : field.value;
+        }
+
+        setOperationStatus(`Saving provider ${providerId}...`);
+
+        const payload = await api(`/api/admin/providers/${providerId}`, {
+          method: "PATCH",
+          body: JSON.stringify({
+            name: card.querySelector("[data-provider-name]").value,
+            description: card.querySelector("[data-provider-description]").value,
+            enabled: card.querySelector("[data-provider-enabled]").checked,
+            default: card.querySelector("[data-provider-default]").checked,
+            config,
+          }),
+        });
+
+        setOperationStatus(`Saved provider ${payload.provider.name}.`);
+        await loadProviders();
+      }
+
+      async function runCleanup() {
+        setOperationStatus("Running backend cleanup...");
+        const payload = await api("/api/admin/cleanup", { method: "POST" });
+        setOperationStatus(JSON.stringify(payload.cleanup || {}, null, 2));
+        await loadSessions();
+      }
+
+      async function stopAllSessions() {
+        if (!window.confirm("Stop all active tracked sessions?")) {
+          return;
+        }
+
+        setOperationStatus("Stopping all active sessions...");
+        const payload = await api("/api/admin/sessions/stop-all", {
+          method: "POST",
+          body: JSON.stringify({ dryRun: false }),
+        });
+        setOperationStatus(JSON.stringify(payload.result || {}, null, 2));
+        await loadSessions();
+      }
+
+      async function removeInactiveSessions() {
+        const olderThanHours = Number(olderThanHoursEl.value || "0");
+
+        if (
+          !window.confirm(
+            `Remove inactive session records older than ${olderThanHours} hour(s)?`
+          )
+        ) {
+          return;
+        }
+
+        setOperationStatus("Removing inactive session records...");
+        const payload = await api("/api/admin/sessions/remove-inactive", {
+          method: "POST",
+          body: JSON.stringify({ olderThanHours }),
+        });
+        setOperationStatus(JSON.stringify(payload.result || {}, null, 2));
+        await loadSessions();
+      }
+
+      async function initialize() {
+        token = localStorage.getItem(TOKEN_STORAGE_KEY);
+        currentIdentity = decodeTokenPayload(token);
+
+        if (!token || !isAdmin()) {
+          authWarningEl.classList.remove("hidden");
+          return;
+        }
+
+        adminAppEl.classList.remove("hidden");
+        await loadProviders();
+        await loadSessions();
+        setOperationStatus("Admin console ready.");
+      }
+
+      reloadButtonEl.addEventListener("click", async () => {
+        await loadProviders();
+        await loadSessions();
+        setOperationStatus("Admin data reloaded.");
+      });
+      cleanupButtonEl.addEventListener("click", async () => { await runCleanup(); });
+      stopAllButtonEl.addEventListener("click", async () => { await stopAllSessions(); });
+      removeInactiveButtonEl.addEventListener("click", async () => { await removeInactiveSessions(); });
+      backToAppButtonEl.addEventListener("click", () => { window.location.href = "/"; });
+      goToAppButtonEl.addEventListener("click", () => { window.location.href = "/"; });
+
+      initialize().catch((error) => {
+        authWarningEl.classList.remove("hidden");
+        setOperationStatus(error.message);
+      });
+    </script>
+  </body>
+</html>

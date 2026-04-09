@@ -12,6 +12,7 @@ RUN apt-get update \
     curl \
     dbus \
     dbus-x11 \
+    epiphany-browser \
     novnc \
     sudo \
     supervisor \

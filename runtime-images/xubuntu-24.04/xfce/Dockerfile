@@ -5,11 +5,26 @@ ENV DISPLAY=:1
 ENV HOME=/home/desktop
 ENV DESKTOP_USER=desktop
 ENV DESKTOP_PASSWORD=desktop
+ENV TZ=Etc/UTC
+ENV NEEDRESTART_MODE=a
+ENV UCF_FORCE_CONFOLD=1
 
-RUN apt-get update \
+RUN ln -snf "/usr/share/zoneinfo/${TZ}" /etc/localtime \
+  && echo "${TZ}" > /etc/timezone \
+  && printf '#!/bin/sh\nexit 101\n' > /usr/sbin/policy-rc.d \
+  && chmod +x /usr/sbin/policy-rc.d \
+  && apt-get update \
+  && apt-get install -y --no-install-recommends debconf-utils \
+  && printf 'keyboard-configuration keyboard-configuration/layoutcode string us\n' | debconf-set-selections \
+  && printf 'keyboard-configuration keyboard-configuration/modelcode string pc105\n' | debconf-set-selections \
+  && printf 'console-setup console-setup/charmap47 select UTF-8\n' | debconf-set-selections \
+  && printf 'console-setup console-setup/codeset47 select Guess optimal character set\n' | debconf-set-selections \
+  && printf 'tzdata tzdata/Areas select Etc\n' | debconf-set-selections \
+  && printf 'tzdata tzdata/Zones/Etc select UTC\n' | debconf-set-selections \
   && apt-get install -y \
     curl \
     dbus-x11 \
+    epiphany-browser \
     novnc \
     sudo \
     supervisor \

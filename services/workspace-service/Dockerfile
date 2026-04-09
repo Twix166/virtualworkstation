@@ -1,6 +1,6 @@
 FROM node:20-alpine
 
-RUN apk add --no-cache docker-cli
+RUN apk add --no-cache docker-cli docker-cli-buildx
 
 WORKDIR /app
 

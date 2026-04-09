@@ -7,6 +7,7 @@ Declarative Docker-based scaffold for a microservices virtual workstation platfo
 - An auth service that issues signed bearer tokens for persisted accounts
 - A data service that persists users, profiles, and workstation session records
 - A workspace service that resolves the selected distro and interface into a real Docker runtime image per session
+- A provider/plugin control plane for Docker and future VM-backed execution providers
 - Distro-backed XFCE desktop images exposed through noVNC in the browser
 - Distro-backed CLI terminal images exposed through `shellinabox` in the browser
 
@@ -19,6 +20,7 @@ Declarative Docker-based scaffold for a microservices virtual workstation platfo
 - `services/auth-service`: User authentication and token issuance
 - `services/data-service`: User/profile/session persistence
 - `services/workspace-service`: Workspace launch orchestration backed by a catalog
+- `web/client/admin`: Dedicated admin console for provider configuration and operations
 - `runtime-images/*/*`: Distro/interface runtime image definitions
 - `config/workspace-catalog.json`: Declarative runtime inventory
 
@@ -77,6 +79,7 @@ The first launch of a distro/interface combination may take longer because the w
 
 - Docker Compose defines the entire topology.
 - `config/workspace-catalog.json` declares which distributions, interfaces, and sizes are available.
+- Provider records are persisted separately from the catalog so execution backends can be enabled, disabled, and configured by administrators.
 - Published control-plane host ports are declared in `.env`.
 - The persistent system record is stored in the `platform-data` volume and served only through `data-service`.
 - Runtime images are declared in `runtime-images/` and resolved from the catalog.
@@ -117,6 +120,18 @@ That design defines:
 - runtime profiles for valid distro + interface combinations
 - a normalized runtime spec resolved at launch time
 - explicit lifecycle semantics for stop, restart, hibernate, and resume
+
+## Provider Plugins
+
+The provider/plugin model is defined in [docs/provider-plugin-design.md](/home/rbalm/code/virtualworkstation/docs/provider-plugin-design.md).
+
+Current state:
+
+- Docker-backed container providers are implemented
+- Proxmox VM providers are configurable from the admin console and now have a first adapter in `workspace-service`
+- Local KVM/libvirt providers are configurable from the admin console
+- Proxmox still needs environment-specific configuration and a richer console handoff path
+- Local libvirt provisioning is not yet implemented
 
 ## Notes
 

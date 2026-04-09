@@ -43,10 +43,98 @@ function ensureDatabase() {
           },
         },
       ],
+      platform: {
+        providers: defaultProviders(),
+      },
       sessions: [],
     };
     fs.writeFileSync(dataFilePath, JSON.stringify(database, null, 2));
   }
+}
+
+function defaultProviders() {
+  return [
+    {
+      id: "docker-local",
+      name: "Local Docker Engine",
+      kind: "container",
+      driver: "docker",
+      enabled: true,
+      default: true,
+      scope: "local",
+      description: "Launch Docker-backed workstations on this host.",
+      capabilities: {
+        machineTypes: ["container"],
+        supportsImages: true,
+        supportsVirtualMachines: false,
+        supportsSuspend: false,
+      },
+      config: {
+        dockerHost: "unix:///var/run/docker.sock",
+        publishMode: "localhost",
+      },
+    },
+    {
+      id: "libvirt-local",
+      name: "Local KVM / libvirt",
+      kind: "virtual-machine",
+      driver: "libvirt",
+      enabled: false,
+      default: false,
+      scope: "local",
+      description: "Provision KVM virtual machines through a local libvirt host.",
+      capabilities: {
+        machineTypes: ["virtual-machine"],
+        supportsImages: false,
+        supportsVirtualMachines: true,
+        supportsSuspend: true,
+      },
+      config: {
+        uri: "qemu:///system",
+        storagePool: "default",
+        network: "default",
+      },
+    },
+    {
+      id: "proxmox-primary",
+      name: "Proxmox VE",
+      kind: "virtual-machine",
+      driver: "proxmox",
+      enabled: false,
+      default: false,
+      scope: "remote",
+      description: "Provision KVM virtual machines on a Proxmox VE cluster.",
+      capabilities: {
+        machineTypes: ["virtual-machine"],
+        supportsImages: false,
+        supportsVirtualMachines: true,
+        supportsSuspend: true,
+      },
+      config: {
+        apiUrl: "",
+        node: "",
+        buildStrategy: "iso-unattended",
+        templateVmid: "",
+        storage: "",
+        isoStorage: "",
+        snippetStorage: "",
+        networkBridge: "vmbr0",
+        validateTls: true,
+        tokenId: "",
+        tokenSecret: "",
+        vmUsername: "",
+        vmPassword: "",
+        timezone: "Europe/London",
+        keyboardLayout: "gb",
+        locale: "en_GB.UTF-8",
+        isoUrl: "",
+        installerIsoVolid: "",
+        installerIsoPattern: "ubuntu-24.04",
+        seedBaseUrl: "",
+        vmConsoleBaseUrl: "",
+      },
+    },
+  ];
 }
 
 function readDatabase() {
@@ -63,6 +151,47 @@ function sanitizeUser(user) {
     id: user.id,
     username: user.username,
     profile: user.profile,
+  };
+}
+
+function ensurePlatformShape(database) {
+  if (!database.platform) {
+    database.platform = { providers: [] };
+  }
+
+  if (!Array.isArray(database.platform.providers)) {
+    database.platform.providers = [];
+  }
+
+  if (database.platform.providers.length === 0) {
+    database.platform.providers = defaultProviders();
+  }
+}
+
+function sanitizeProvider(provider) {
+  const config = { ...(provider.config || {}) };
+
+  if ("tokenSecret" in config) {
+    config.tokenSecret = "";
+    config.hasTokenSecret = Boolean(provider.config?.tokenSecret);
+  }
+
+  if ("vmPassword" in config) {
+    config.vmPassword = "";
+    config.hasVmPassword = Boolean(provider.config?.vmPassword);
+  }
+
+  return {
+    id: provider.id,
+    name: provider.name,
+    kind: provider.kind,
+    driver: provider.driver,
+    enabled: Boolean(provider.enabled),
+    default: Boolean(provider.default),
+    scope: provider.scope || "local",
+    description: provider.description || "",
+    capabilities: provider.capabilities || {},
+    config,
   };
 }
 
@@ -139,6 +268,92 @@ const server = http.createServer(async (req, res) => {
     }
 
     json(res, 200, { user });
+    return;
+  }
+
+  if (req.method === "GET" && req.url === "/v1/platform/providers") {
+    const database = readDatabase();
+    ensurePlatformShape(database);
+    json(res, 200, {
+      providers: database.platform.providers.map(sanitizeProvider),
+    });
+    return;
+  }
+
+  if (req.method === "GET" && req.url === "/v1/platform/providers/internal") {
+    const database = readDatabase();
+    ensurePlatformShape(database);
+    json(res, 200, {
+      providers: database.platform.providers,
+    });
+    return;
+  }
+
+  if (req.method === "PATCH" && req.url.startsWith("/v1/platform/providers/")) {
+    const parts = req.url.split("/").filter(Boolean);
+    const providerId = parts[3];
+    const body = await readRequestBody(req);
+    const request = body ? JSON.parse(body) : {};
+    const database = readDatabase();
+    ensurePlatformShape(database);
+    const provider = database.platform.providers.find((entry) => entry.id === providerId);
+
+    if (!provider) {
+      json(res, 404, { error: "Provider not found" });
+      return;
+    }
+
+    if (request.name !== undefined) {
+      const name = String(request.name || "").trim();
+
+      if (!name) {
+        json(res, 400, { error: "name is required" });
+        return;
+      }
+
+      provider.name = name;
+    }
+
+    if (request.description !== undefined) {
+      provider.description = String(request.description || "").trim();
+    }
+
+    if (request.enabled !== undefined) {
+      provider.enabled = Boolean(request.enabled);
+    }
+
+    if (request.default !== undefined) {
+      const nextDefault = Boolean(request.default);
+      provider.default = nextDefault;
+
+      if (nextDefault) {
+        for (const entry of database.platform.providers) {
+          if (entry.id !== provider.id && entry.kind === provider.kind) {
+            entry.default = false;
+          }
+        }
+      }
+    }
+
+    if (request.config && typeof request.config === "object") {
+      provider.config = {
+        ...(provider.config || {}),
+      };
+
+      for (const [key, value] of Object.entries(request.config)) {
+        if (key === "tokenSecret") {
+          if (value !== undefined && value !== null && String(value).trim()) {
+            provider.config.tokenSecret = String(value);
+          }
+          continue;
+        }
+
+        provider.config[key] = value;
+      }
+    }
+
+    writeDatabase(database);
+    json(res, 200, { provider: sanitizeProvider(provider) });
     return;
   }
 
@@ -230,6 +445,8 @@ const server = http.createServer(async (req, res) => {
       distributionId: request.distributionId || null,
       interfaceId: request.interfaceId || null,
       instanceSizeId: request.instanceSizeId || null,
+      machineTypeId: request.machineTypeId || "container",
+      providerId: request.providerId || "docker-local",
       profileId: request.profileId || null,
       state: request.state || "building",
       statusDetail: request.statusDetail || "",
@@ -292,6 +509,14 @@ const server = http.createServer(async (req, res) => {
 
     if (request.resolvedRuntimeSpec !== undefined) {
       session.resolvedRuntimeSpec = request.resolvedRuntimeSpec;
+    }
+
+    if (request.machineTypeId !== undefined) {
+      session.machineTypeId = request.machineTypeId;
+    }
+
+    if (request.providerId !== undefined) {
+      session.providerId = request.providerId;
     }
 
     if (request.lifecycleCapabilities !== undefined) {

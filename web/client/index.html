@@ -791,6 +791,10 @@
                   Profile Settings
                   <small>Update default launch preferences.</small>
                 </button>
+                <button id="adminConsoleButton" class="menu-item hidden" type="button">
+                  Admin Console
+                  <small>Open provider configuration and platform administration.</small>
+                </button>
                 <button id="signOutButton" class="menu-item danger-button" type="button">
                   Sign Out
                   <small>End this browser session and return to the login screen.</small>
@@ -808,6 +812,20 @@
                   <h2>Launch Session</h2>
                   <p>Choose a distribution, interface, and instance size for the next workstation.</p>
                 </div>
+              </div>
+
+              <div>
+                <label for="machineType">Machine type</label>
+                <select id="machineType">
+                  <option value="">Loading machine types...</option>
+                </select>
+              </div>
+
+              <div>
+                <label for="machineProvider">Execution provider</label>
+                <select id="machineProvider">
+                  <option value="">Loading providers...</option>
+                </select>
               </div>
 
               <div>
@@ -845,24 +863,19 @@
             <article id="adminTools" class="app-card hidden">
               <div class="card-heading">
                 <div>
-                  <h2>Admin Tools</h2>
-                  <p>Compare persisted session records with live containers and run maintenance actions.</p>
+                  <h2>Admin Console</h2>
+                  <p>Provider configuration and platform maintenance now live in a dedicated admin surface.</p>
                 </div>
               </div>
 
-              <div class="admin-actions">
-                <button id="adminCleanupButton" class="secondary-button" type="button">Run Cleanup Now</button>
-                <button id="adminStopAllButton" class="secondary-button" type="button">Stop All Active Sessions</button>
-                <button id="adminRemoveInactiveButton" class="danger-button" type="button">Remove Inactive Sessions</button>
-              </div>
-
-              <div>
-                <label for="adminInactiveHours">Remove inactive session records older than</label>
-                <input id="adminInactiveHours" type="number" min="0" step="1" value="24" />
+              <div class="launch-actions">
+                <button id="adminConsoleCardButton" class="secondary-button" type="button">
+                  Open Admin Console
+                </button>
               </div>
 
               <div id="adminCleanupSummary" class="admin-summary">
-                Admin tools are available to administrative accounts.
+                Sign in as an administrator to manage providers, Docker cleanup, and session inventory from the dedicated admin page.
               </div>
             </article>
           </div>
@@ -945,6 +958,8 @@
       const loginButtonEl = document.getElementById("loginButton");
       const registerButtonEl = document.getElementById("registerButton");
       const launchButtonEl = document.getElementById("launchButton");
+      const machineTypeEl = document.getElementById("machineType");
+      const machineProviderEl = document.getElementById("machineProvider");
       const distributionEl = document.getElementById("distribution");
       const desktopEnvironmentEl = document.getElementById("desktopEnvironment");
       const instanceSizeEl = document.getElementById("instanceSize");
@@ -959,12 +974,10 @@
       const menuProfileMetaEl = document.getElementById("menuProfileMeta");
       const manageProfileButtonEl = document.getElementById("manageProfileButton");
       const profileSettingsButtonEl = document.getElementById("profileSettingsButton");
+      const adminConsoleButtonEl = document.getElementById("adminConsoleButton");
       const signOutButtonEl = document.getElementById("signOutButton");
       const adminToolsEl = document.getElementById("adminTools");
-      const adminCleanupButtonEl = document.getElementById("adminCleanupButton");
-      const adminStopAllButtonEl = document.getElementById("adminStopAllButton");
-      const adminRemoveInactiveButtonEl = document.getElementById("adminRemoveInactiveButton");
-      const adminInactiveHoursEl = document.getElementById("adminInactiveHours");
+      const adminConsoleCardButtonEl = document.getElementById("adminConsoleCardButton");
       const adminCleanupSummaryEl = document.getElementById("adminCleanupSummary");
       const profileModalBackdropEl = document.getElementById("profileModalBackdrop");
       const profileModalCloseEl = document.getElementById("profileModalClose");
@@ -983,9 +996,10 @@
       let authMode = "signin";
       let pollingHandle = null;
       let sessions = [];
-      let adminSessions = [];
       let sessionActionInFlight = new Set();
       let catalog = {
+        machineTypes: [],
+        machineProviders: [],
         distributions: [],
         interfaces: [],
         instanceSizes: [],
@@ -1179,6 +1193,14 @@
         return catalog.distributions.find((entry) => entry.id === distributionId);
       }
 
+      function findMachineType(machineTypeId) {
+        return (catalog.machineTypes || []).find((entry) => entry.id === machineTypeId);
+      }
+
+      function findMachineProvider(providerId) {
+        return (catalog.machineProviders || []).find((entry) => entry.id === providerId);
+      }
+
       function findInterface(interfaceId) {
         return catalog.interfaces.find((entry) => entry.id === interfaceId);
       }
@@ -1232,6 +1254,9 @@
       }
 
       function getSessionName(session) {
+        const machineTypeName =
+          findMachineType(session.machineTypeId)?.name ||
+          (session.machineTypeId === "virtual-machine" ? "Virtual Machine" : "");
         const distributionName =
           findDistribution(session.distributionId)?.name || session.distributionId || "Linux";
         const interfaceName =
@@ -1240,7 +1265,7 @@
           session.desktopEnvironment ||
           "Session";
 
-        return `${distributionName} / ${interfaceName}`;
+        return [distributionName, interfaceName, machineTypeName].filter(Boolean).join(" / ");
       }
 
       function getSessionLabel(session) {
@@ -1251,10 +1276,31 @@
           parts.push(size.name);
         }
 
+        const provider = findMachineProvider(session.providerId);
+
+        if (provider) {
+          parts.push(provider.name);
+        }
+
         if (session.statusDetail) {
           parts.push(session.statusDetail);
         } else if (session.createdAt) {
           parts.push(new Date(session.createdAt).toLocaleString());
+        }
+
+        return parts.join(" • ");
+      }
+
+      function getSessionResourceMeta(session) {
+        const resource = session.provisionedResource || {};
+        const parts = [];
+
+        if (resource.vmid) {
+          parts.push(`VM ${resource.vmid}`);
+        }
+
+        if (resource.name) {
+          parts.push(resource.name);
         }
 
         return parts.join(" • ");
@@ -1354,6 +1400,7 @@
           `@${currentUser.username}`,
           isAdmin() ? "Administrator" : "Workspace user",
         ].join(" • ");
+        adminConsoleButtonEl.classList.toggle("hidden", !isAdmin());
       }
 
       function renderAdminTools() {
@@ -1363,6 +1410,9 @@
         if (!visible) {
           adminCleanupSummaryEl.textContent =
             "Admin tools are available to administrative accounts.";
+        } else {
+          adminCleanupSummaryEl.textContent =
+            "Use the dedicated admin console to configure Docker, Proxmox, and local KVM providers.";
         }
       }
 
@@ -1377,8 +1427,14 @@
           .map((session) => {
             const tone = sessionTone(session.state);
             const canOpen = session.state === "ready" || session.state === "running";
+            const canOpenConsole =
+              session.machineTypeId === "virtual-machine" && Boolean(session.consoleUrl);
             const openDisabled =
               sessionActionInFlight.has(`${session.id}:open`) || !canOpen ? "disabled" : "";
+            const consoleDisabled =
+              sessionActionInFlight.has(`${session.id}:console`) || !canOpenConsole
+                ? "disabled"
+                : "";
             const stopDisabled =
               sessionActionInFlight.has(`${session.id}:stop`) ||
               !["ready", "running", "launching", "building", "error", "stopped"].includes(
@@ -1394,10 +1450,16 @@
                 <button class="session-button ${tone}" data-session-id="${session.id}" type="button">
                   <span class="session-name">${session.name}</span>
                   <span class="session-meta">${session.label}</span>
+                  ${
+                    session.resourceMeta
+                      ? `<span class="session-meta">${session.resourceMeta}</span>`
+                      : ""
+                  }
                   <span class="status-chip ${tone}">${formatSessionState(session.state)}</span>
                 </button>
                 <div class="session-controls">
                   <button class="session-open secondary-button" data-open-session-id="${session.id}" type="button" ${openDisabled}>Open</button>
+                  <button class="session-console secondary-button" data-console-session-id="${session.id}" type="button" ${consoleDisabled}>Console</button>
                   <button class="session-stop secondary-button" data-stop-session-id="${session.id}" type="button" ${stopDisabled}>Stop</button>
                   <button class="session-remove secondary-button" data-remove-session-id="${session.id}" type="button" ${removeDisabled}>Remove</button>
                 </div>
@@ -1419,6 +1481,7 @@
                 session.name,
                 `Status: ${formatSessionState(session.state)}`,
                 session.label,
+                session.resourceMeta || "",
                 session.url ? `Session URL: ${session.url}` : "Session URL not available yet.",
               ].join("\n")
             );
@@ -1428,6 +1491,12 @@
         for (const button of sessionListEl.querySelectorAll("[data-open-session-id]")) {
           button.addEventListener("click", async () => {
             await openSession(button.dataset.openSessionId);
+          });
+        }
+
+        for (const button of sessionListEl.querySelectorAll("[data-console-session-id]")) {
+          button.addEventListener("click", async () => {
+            await openConsole(button.dataset.consoleSessionId);
           });
         }
 
@@ -1463,6 +1532,33 @@
           catalog.policies.defaultDistributionId ||
           catalog.distributions.find((entry) => entry.default)?.id ||
           catalog.distributions[0]?.id ||
+          "";
+      }
+
+      function populateMachineTypeOptions() {
+        machineTypeEl.innerHTML = (catalog.machineTypes || [])
+          .map((entry) => `<option value="${entry.id}">${entry.name}</option>`)
+          .join("");
+
+        machineTypeEl.value =
+          catalog.policies.defaultMachineTypeId ||
+          catalog.machineTypes.find((entry) => entry.default)?.id ||
+          catalog.machineTypes[0]?.id ||
+          "container";
+      }
+
+      function populateProviderOptions() {
+        const allowedProviders = (catalog.machineProviders || []).filter(
+          (entry) => entry.kind === machineTypeEl.value
+        );
+
+        machineProviderEl.innerHTML = allowedProviders
+          .map((entry) => `<option value="${entry.id}">${entry.name}</option>`)
+          .join("");
+
+        machineProviderEl.value =
+          allowedProviders.find((entry) => entry.default)?.id ||
+          allowedProviders[0]?.id ||
           "";
       }
 
@@ -1517,6 +1613,8 @@
         }
 
         catalog = payload;
+        populateMachineTypeOptions();
+        populateProviderOptions();
         populateDistributionOptions();
         populateInterfaceOptions();
         populateInstanceSizeOptions();
@@ -1547,41 +1645,16 @@
             id: session.id,
             name: getSessionName(session),
             label: getSessionLabel(session),
+            resourceMeta: getSessionResourceMeta(session),
             state: session.state,
+            machineTypeId: session.machineTypeId,
+            providerId: session.providerId,
             url: session.connection ? session.connection.url : "",
+            consoleUrl:
+              session.machineTypeId === "virtual-machine" ? session.connection?.url || "" : "",
+            provisionedResource: session.provisionedResource || null,
           }))
         );
-      }
-
-      async function refreshAdminSessions() {
-        if (!token || !isAdmin()) {
-          adminSessions = [];
-          renderAdminTools();
-          return;
-        }
-
-        const response = await fetch("/api/admin/sessions", {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        const payload = await response.json();
-
-        if (!response.ok) {
-          adminCleanupSummaryEl.textContent = JSON.stringify(payload, null, 2);
-          return;
-        }
-
-        adminSessions = payload.sessions || [];
-        const summary = summarizeAdminSessions(adminSessions);
-        adminCleanupSummaryEl.textContent = [
-          `Tracked session records: ${summary.totalRecords}`,
-          `Live workstation containers: ${summary.liveContainers}`,
-          `Active records: ${summary.active}`,
-          `Ready records: ${summary.ready}`,
-          `Building or launching: ${summary.building}`,
-          `Inactive records: ${summary.inactive}`,
-          `Errored records: ${summary.errors}`,
-          `Inactive records removable now: ${summary.removableRecords}`,
-        ].join("\n");
       }
 
       async function loadCurrentUser() {
@@ -1611,9 +1684,6 @@
         stopSessionPolling();
         pollingHandle = setInterval(() => {
           refreshSessions().catch(() => {});
-          if (isAdmin()) {
-            refreshAdminSessions().catch(() => {});
-          }
         }, 3000);
       }
 
@@ -1658,7 +1728,6 @@
         currentUser = null;
         currentIdentity = null;
         sessions = [];
-        adminSessions = [];
         sessionActionInFlight = new Set();
         persistAuthState();
         stopSessionPolling();
@@ -1700,9 +1769,6 @@
         await loadCatalog();
         await loadCurrentUser();
         await refreshSessions();
-        if (isAdmin()) {
-          await refreshAdminSessions();
-        }
         startSessionPolling();
         setAuthMessage("");
         setStatus(formatAuthSummary(payload, route === "/api/register" ? "register" : "login"));
@@ -1756,6 +1822,8 @@
             Authorization: `Bearer ${token}`,
           },
           body: JSON.stringify({
+            machineTypeId: machineTypeEl.value,
+            providerId: machineProviderEl.value,
             distributionId: distributionEl.value,
             interfaceId: desktopEnvironmentEl.value,
             instanceSizeId: instanceSizeEl.value,
@@ -1773,8 +1841,13 @@
             id: payload.sessionId,
             name: getSessionName(payload),
             label: payload.statusDetail || formatSessionState(payload.state),
+            resourceMeta: "",
             state: payload.state,
+            machineTypeId: payload.machineTypeId,
+            providerId: payload.providerId,
             url: "",
+            consoleUrl: "",
+            provisionedResource: null,
           },
           ...sessions,
         ];
@@ -1804,6 +1877,27 @@
         }
       }
 
+      async function openConsole(sessionId) {
+        sessionActionInFlight.add(`${sessionId}:console`);
+        renderSessions();
+
+        try {
+          const session = sessions.find((entry) => entry.id === sessionId);
+
+          if (session?.consoleUrl) {
+            window.open(
+              session.consoleUrl,
+              `vw-console-${sessionId}`,
+              "popup=yes,width=1440,height=960,resizable=yes,scrollbars=yes"
+            );
+            setStatus(`Opened console for session ${sessionId}.`);
+          }
+        } finally {
+          sessionActionInFlight.delete(`${sessionId}:console`);
+          renderSessions();
+        }
+      }
+
       async function stopSession(sessionId) {
         sessionActionInFlight.add(`${sessionId}:stop`);
         renderSessions();
@@ -1824,9 +1918,6 @@
           }
 
           await refreshSessions();
-          if (isAdmin()) {
-            await refreshAdminSessions();
-          }
           setStatus(formatSessionActionSummary("Session stopped.", payload));
         } finally {
           sessionActionInFlight.delete(`${sessionId}:stop`);
@@ -1855,107 +1946,10 @@
 
           sessions = sessions.filter((entry) => entry.id !== sessionId);
           renderSessions();
-          if (isAdmin()) {
-            await refreshAdminSessions();
-          }
           setStatus("Session removed.");
         } finally {
           sessionActionInFlight.delete(`${sessionId}:remove`);
           renderSessions();
-        }
-      }
-
-      async function runCleanup() {
-        adminCleanupButtonEl.disabled = true;
-        adminStopAllButtonEl.disabled = true;
-        adminRemoveInactiveButtonEl.disabled = true;
-        adminInactiveHoursEl.disabled = true;
-        adminCleanupSummaryEl.textContent = "Running backend cleanup...";
-        setStatus("Running backend cleanup...");
-
-        try {
-          const response = await fetch("/api/admin/cleanup", {
-            method: "POST",
-            headers: {
-              Authorization: `Bearer ${token}`,
-            },
-          });
-          const payload = await response.json();
-
-          if (!response.ok) {
-            adminCleanupSummaryEl.textContent = JSON.stringify(payload, null, 2);
-            setStatus(formatErrorMessage(payload, "Unable to run backend cleanup."), true);
-            return;
-          }
-
-          const cleanup = payload.cleanup || {};
-          adminCleanupSummaryEl.textContent = [
-            `Requested by: ${cleanup.requestedBy || "unknown"}`,
-            `Tracked session records: ${cleanup.totalSessions ?? "n/a"}`,
-            `Live workstation containers: ${cleanup.activeTrackedContainers ?? "n/a"}`,
-            `Managed container labels seen: ${cleanup.totalManagedContainers ?? "n/a"}`,
-            `Removed orphaned containers: ${cleanup.removedOrphanedContainers ?? "n/a"}`,
-            `Normalized records: ${cleanup.normalizedSessions ?? "n/a"}`,
-          ].join("\n");
-          await refreshAdminSessions();
-          setStatus(formatCleanupStatus(payload));
-        } finally {
-          adminCleanupButtonEl.disabled = false;
-          adminStopAllButtonEl.disabled = false;
-          adminRemoveInactiveButtonEl.disabled = false;
-          adminInactiveHoursEl.disabled = false;
-        }
-      }
-
-      async function runAdminSessionAction(action, body, pendingText, confirmationText) {
-        if (confirmationText && !window.confirm(confirmationText)) {
-          setStatus("Admin action cancelled.");
-          return;
-        }
-
-        adminCleanupButtonEl.disabled = true;
-        adminStopAllButtonEl.disabled = true;
-        adminRemoveInactiveButtonEl.disabled = true;
-        adminInactiveHoursEl.disabled = true;
-        adminCleanupSummaryEl.textContent = pendingText;
-        setStatus(pendingText);
-
-        try {
-          const response = await fetch(`/api/admin/sessions/${action}`, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: `Bearer ${token}`,
-            },
-            body: body ? JSON.stringify(body) : "",
-          });
-          const payload = await response.json();
-
-          if (!response.ok) {
-            adminCleanupSummaryEl.textContent = JSON.stringify(payload, null, 2);
-            setStatus(formatErrorMessage(payload, "Unable to complete admin action."), true);
-            return;
-          }
-
-          const result = payload.result || {};
-          const cleanup = result.cleanup || {};
-          adminCleanupSummaryEl.textContent = [
-            `Action: ${result.action || action}`,
-            `Requested by: ${result.requestedBy || "unknown"}`,
-            `Candidates: ${result.candidateCount ?? "n/a"}`,
-            `Stopped: ${result.stoppedCount ?? 0}`,
-            `Removed: ${result.removedCount ?? 0}`,
-            `Dry run: ${String(Boolean(result.dryRun))}`,
-            `Cleanup removed orphaned containers: ${cleanup.removedOrphanedContainers ?? "n/a"}`,
-          ].join("\n");
-          await refreshSessions();
-          await refreshAdminSessions();
-          setStatus(formatAdminActionStatus(payload, action));
-        } finally {
-          adminCleanupButtonEl.disabled = false;
-          adminStopAllButtonEl.disabled = false;
-          adminRemoveInactiveButtonEl.disabled = false;
-          adminInactiveHoursEl.disabled = false;
         }
       }
 
@@ -1973,6 +1967,9 @@
       launchButtonEl.addEventListener("click", async () => {
         await launchSession();
       });
+      machineTypeEl.addEventListener("change", () => {
+        populateProviderOptions();
+      });
       distributionEl.addEventListener("change", () => {
         populateInterfaceOptions();
       });
@@ -1985,30 +1982,14 @@
       profileSettingsButtonEl.addEventListener("click", () => {
         openProfileModal();
       });
+      adminConsoleButtonEl.addEventListener("click", () => {
+        window.location.href = "/admin";
+      });
       signOutButtonEl.addEventListener("click", () => {
         signOut();
       });
-      adminCleanupButtonEl.addEventListener("click", async () => {
-        await runCleanup();
-      });
-      adminStopAllButtonEl.addEventListener("click", async () => {
-        const summary = summarizeAdminSessions(adminSessions);
-        await runAdminSessionAction(
-          "stop-all",
-          null,
-          "Stopping all active tracked sessions...",
-          `Stop ${summary.active} active tracked session record(s)? This will shut down every currently active workstation managed by the platform.`
-        );
-      });
-      adminRemoveInactiveButtonEl.addEventListener("click", async () => {
-        const olderThanHours = Number(adminInactiveHoursEl.value || "0");
-        const summary = summarizeAdminSessions(adminSessions);
-        await runAdminSessionAction(
-          "remove-inactive",
-          { olderThanHours },
-          "Removing inactive tracked session records...",
-          `Remove inactive session records older than ${olderThanHours} hour(s)? ${summary.removableRecords} record(s) are currently removable.`
-        );
+      adminConsoleCardButtonEl.addEventListener("click", () => {
+        window.location.href = "/admin";
       });
       profileModalCloseEl.addEventListener("click", closeProfileModal);
       profileModalCancelEl.addEventListener("click", closeProfileModal);
@@ -2054,9 +2035,6 @@
         showSignedInView();
         launchButtonEl.disabled = false;
         await refreshSessions();
-        if (isAdmin()) {
-          await refreshAdminSessions();
-        }
         startSessionPolling();
       }
 

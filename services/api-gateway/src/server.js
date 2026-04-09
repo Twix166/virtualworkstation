@@ -15,6 +15,11 @@ function json(res, statusCode, payload) {
   res.end(JSON.stringify(payload));
 }
 
+function text(res, statusCode, body, contentType = "text/plain; charset=utf-8") {
+  res.writeHead(statusCode, { "Content-Type": contentType });
+  res.end(body);
+}
+
 function readRequestBody(req) {
   return new Promise((resolve, reject) => {
     let body = "";
@@ -66,6 +71,36 @@ function forwardJson(targetBaseUrl, route, method, body, headers = {}) {
   });
 }
 
+function forwardRaw(targetBaseUrl, route, method, headers = {}) {
+  return new Promise((resolve, reject) => {
+    const target = new URL(route, targetBaseUrl);
+    const request = http.request(
+      target,
+      {
+        method,
+        headers,
+      },
+      (response) => {
+        let responseBody = "";
+        response.setEncoding("utf8");
+        response.on("data", (chunk) => {
+          responseBody += chunk;
+        });
+        response.on("end", () => {
+          resolve({
+            statusCode: response.statusCode || 500,
+            headers: response.headers,
+            body: responseBody,
+          });
+        });
+      }
+    );
+
+    request.on("error", reject);
+    request.end();
+  });
+}
+
 function serveStaticFile(filePath, res) {
   const extension = path.extname(filePath);
   const contentTypes = {
@@ -86,6 +121,30 @@ function serveStaticFile(filePath, res) {
     });
     res.end(contents);
   });
+}
+
+function decodeBearerPayload(authorization) {
+  if (!authorization.startsWith("Bearer ")) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(
+      Buffer.from(
+        authorization.slice("Bearer ".length).split(".")[0],
+        "base64url"
+      ).toString("utf8")
+    );
+  } catch (error) {
+    return null;
+  }
+}
+
+function isAdminPayload(payload) {
+  return Boolean(
+    payload &&
+      (payload.isAdmin || payload.role === "admin" || payload.username === "demo")
+  );
 }
 
 const server = http.createServer(async (req, res) => {
@@ -121,6 +180,23 @@ const server = http.createServer(async (req, res) => {
         error: "Workspace catalog unavailable",
         detail: error.message,
       });
+    }
+    return;
+  }
+
+  if (req.method === "GET" && req.url.startsWith("/api/install-seeds/")) {
+    try {
+      const response = await forwardRaw(
+        workspaceServiceUrl,
+        req.url.replace("/api", "/v1"),
+        "GET"
+      );
+      res.writeHead(response.statusCode, {
+        "Content-Type": response.headers["content-type"] || "text/plain; charset=utf-8",
+      });
+      res.end(response.body);
+    } catch (error) {
+      text(res, 502, `Workspace service unavailable: ${error.message}\n`);
     }
     return;
   }
@@ -262,6 +338,13 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (req.method === "GET" && req.url === "/api/admin/sessions") {
+    const payload = decodeBearerPayload(req.headers.authorization || "");
+
+    if (!isAdminPayload(payload)) {
+      json(res, 403, { error: "Admin access required" });
+      return;
+    }
+
     try {
       const response = await forwardJson(
         workspaceServiceUrl,
@@ -301,6 +384,13 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (req.method === "POST" && req.url === "/api/admin/cleanup") {
+    const payload = decodeBearerPayload(req.headers.authorization || "");
+
+    if (!isAdminPayload(payload)) {
+      json(res, 403, { error: "Admin access required" });
+      return;
+    }
+
     try {
       const response = await forwardJson(
         workspaceServiceUrl,
@@ -320,6 +410,13 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (req.method === "POST" && req.url === "/api/admin/sessions/stop-all") {
+    const payload = decodeBearerPayload(req.headers.authorization || "");
+
+    if (!isAdminPayload(payload)) {
+      json(res, 403, { error: "Admin access required" });
+      return;
+    }
+
     try {
       const body = await readRequestBody(req);
       const response = await forwardJson(
@@ -340,6 +437,13 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (req.method === "POST" && req.url === "/api/admin/sessions/remove-inactive") {
+    const payload = decodeBearerPayload(req.headers.authorization || "");
+
+    if (!isAdminPayload(payload)) {
+      json(res, 403, { error: "Admin access required" });
+      return;
+    }
+
     try {
       const body = await readRequestBody(req);
       const response = await forwardJson(
@@ -353,6 +457,56 @@ const server = http.createServer(async (req, res) => {
     } catch (error) {
       json(res, 502, {
         error: "Workspace service unavailable",
+        detail: error.message,
+      });
+    }
+    return;
+  }
+
+  if (req.method === "GET" && req.url === "/api/admin/providers") {
+    const payload = decodeBearerPayload(req.headers.authorization || "");
+
+    if (!isAdminPayload(payload)) {
+      json(res, 403, { error: "Admin access required" });
+      return;
+    }
+
+    try {
+      const response = await forwardJson(
+        dataServiceUrl,
+        "/v1/platform/providers",
+        "GET"
+      );
+      json(res, response.statusCode, response.payload);
+    } catch (error) {
+      json(res, 502, {
+        error: "Data service unavailable",
+        detail: error.message,
+      });
+    }
+    return;
+  }
+
+  if (req.method === "PATCH" && req.url.startsWith("/api/admin/providers/")) {
+    const payload = decodeBearerPayload(req.headers.authorization || "");
+
+    if (!isAdminPayload(payload)) {
+      json(res, 403, { error: "Admin access required" });
+      return;
+    }
+
+    try {
+      const body = await readRequestBody(req);
+      const response = await forwardJson(
+        dataServiceUrl,
+        req.url.replace("/api/admin", "/v1/platform"),
+        "PATCH",
+        body
+      );
+      json(res, response.statusCode, response.payload);
+    } catch (error) {
+      json(res, 502, {
+        error: "Data service unavailable",
         detail: error.message,
       });
     }
@@ -443,7 +597,12 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  const requestedPath = req.url === "/" ? "/index.html" : req.url;
+  const requestedPath =
+    req.url === "/"
+      ? "/index.html"
+      : req.url === "/admin" || req.url === "/admin/"
+        ? "/admin/index.html"
+        : req.url;
   const filePath = path.join(clientDir, requestedPath);
 
   if (!filePath.startsWith(clientDir)) {

@@ -1,4 +1,5 @@
 const http = require("http");
+const https = require("https");
 const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
@@ -15,7 +16,7 @@ const runtimeSourceRoot =
   process.env.RUNTIME_SOURCE_ROOT || path.resolve(__dirname, "../../..");
 const cleanupIntervalMs = Number(process.env.CLEANUP_INTERVAL_MS || 120000);
 const staleProvisioningSessionMs = Number(
-  process.env.STALE_PROVISIONING_SESSION_MS || 5 * 60 * 1000
+  process.env.STALE_PROVISIONING_SESSION_MS || 20 * 60 * 1000
 );
 let cleanupInProgress = false;
 const imageBuildOperations = new Map();
@@ -225,14 +226,25 @@ function mapBuildOutputToStatus(line) {
   }
 
   if (
-    text.includes("Setting up ") ||
-    text.includes("Selecting previously unselected package")
+    text.includes("Selecting previously unselected package") ||
+    text.includes("Preparing to unpack ") ||
+    text.includes("Unpacking ")
   ) {
-    return "Configuring installed packages...";
+    return "Unpacking desktop packages...";
+  }
+
+  if (
+    text.includes("Setting up ") ||
+    text.includes("Processing triggers for ")
+  ) {
+    return "Configuring installed packages. This can take several minutes for a full desktop image...";
   }
 
   if (
     text.includes("exporting to image") ||
+    text.includes("exporting layers") ||
+    text.includes("importing to docker") ||
+    text.includes("writing image sha256:") ||
     text.includes("naming to ") ||
     text.includes("unpacking to ")
   ) {
@@ -307,6 +319,737 @@ function buildRuntimeSpec(selection) {
       exposedPort: selection.runtimeProfile.launch.exposedPort,
       connectionPath: selection.runtimeProfile.launch.connectionPath,
     },
+  };
+}
+
+function defaultMachineTypes() {
+  return [
+    {
+      id: "container",
+      name: "Docker Image",
+      kind: "container",
+      description: "Launch a container-backed workstation or terminal session.",
+      default: true,
+    },
+    {
+      id: "virtual-machine",
+      name: "Virtual Machine",
+      kind: "virtual-machine",
+      description: "Launch a KVM-backed virtual machine through a provider plugin.",
+    },
+  ];
+}
+
+async function listProviders() {
+  const response = await forwardJson("/v1/platform/providers/internal", "GET");
+  return response.payload.providers || [];
+}
+
+async function getProviderRecordForSession(session) {
+  const providers = await listProviders();
+  const providerId = session?.providerId || session?.resolvedRuntimeSpec?.provider?.id;
+  return providers.find((entry) => entry.id === providerId) || null;
+}
+
+function getSessionRuntimeResource(session) {
+  return session?.resolvedRuntimeSpec?.provisionedResource || null;
+}
+
+function buildProxmoxAuthorizationHeader(provider) {
+  const tokenId = String(provider?.config?.tokenId || "").trim();
+  const tokenSecret = String(provider?.config?.tokenSecret || "").trim();
+
+  if (!tokenId || !tokenSecret) {
+    throw new Error("Proxmox provider is missing tokenId or tokenSecret");
+  }
+
+  return `PVEAPIToken=${tokenId}=${tokenSecret}`;
+}
+
+function text(res, statusCode, body, contentType = "text/plain; charset=utf-8") {
+  res.writeHead(statusCode, { "Content-Type": contentType });
+  res.end(body);
+}
+
+function getLocalRequestUrl(req) {
+  return new URL(req.url || "/", "http://workspace-service.local");
+}
+
+function getProviderConfigValue(provider, key) {
+  return String(provider?.config?.[key] || "").trim();
+}
+
+function getProviderBoolean(provider, key, fallback = false) {
+  const value = provider?.config?.[key];
+
+  if (value === undefined || value === null || value === "") {
+    return fallback;
+  }
+
+  return Boolean(value);
+}
+
+function sanitizeProviderRecord(provider) {
+  if (!provider) {
+    return null;
+  }
+
+  const config = {
+    ...(provider.config || {}),
+  };
+
+  if ("tokenSecret" in config) {
+    config.tokenSecret = "";
+    config.hasTokenSecret = Boolean(provider.config?.tokenSecret);
+  }
+
+  if ("vmPassword" in config) {
+    config.vmPassword = "";
+    config.hasVmPassword = Boolean(provider.config?.vmPassword);
+  }
+
+  return {
+    ...provider,
+    config,
+  };
+}
+
+function sanitizeRuntimeSpecForPersistence(runtimeSpec) {
+  if (!runtimeSpec) {
+    return null;
+  }
+
+  return {
+    ...runtimeSpec,
+    providerRecord: sanitizeProviderRecord(runtimeSpec.providerRecord),
+  };
+}
+
+function buildSeedPaths(sessionId, installToken) {
+  const basePath = `/api/install-seeds/${encodeURIComponent(sessionId)}/${encodeURIComponent(
+    installToken
+  )}`;
+  return {
+    basePath,
+    userDataPath: `${basePath}/user-data`,
+    metaDataPath: `${basePath}/meta-data`,
+  };
+}
+
+function getSeedBaseUrl(provider) {
+  const configuredSeedBaseUrl = getProviderConfigValue(provider, "seedBaseUrl");
+
+  if (configuredSeedBaseUrl) {
+    return configuredSeedBaseUrl.replace(/\/$/, "");
+  }
+
+  const fallbackUrl = String(publicBaseUrl || "").trim();
+
+  if (!fallbackUrl) {
+    throw new Error(
+      "Proxmox provider is missing seedBaseUrl. Set a guest-reachable URL for unattended install seeds."
+    );
+  }
+
+  const parsed = new URL(fallbackUrl);
+
+  if (["localhost", "127.0.0.1", "::1"].includes(parsed.hostname)) {
+    throw new Error(
+      "Proxmox unattended installs require a guest-reachable seedBaseUrl. Update the provider config with this host's LAN URL, for example http://10.0.0.149:8080."
+    );
+  }
+
+  return parsed.origin.replace(/\/$/, "");
+}
+
+function getVmConsoleBaseUrl(provider) {
+  const configured = getProviderConfigValue(provider, "vmConsoleBaseUrl");
+
+  if (configured) {
+    return configured.replace(/\/$/, "");
+  }
+
+  const apiUrl = getProviderConfigValue(provider, "apiUrl");
+
+  if (!apiUrl) {
+    return "";
+  }
+
+  return new URL(apiUrl).origin.replace(/\/$/, "");
+}
+
+function buildProxmoxConsoleUrl(provider, vmid) {
+  const baseUrl = getVmConsoleBaseUrl(provider);
+  const node = getProviderConfigValue(provider, "node");
+
+  if (!baseUrl || !vmid || !node) {
+    return null;
+  }
+
+  return `${baseUrl}/?console=kvm&novnc=1&vmid=${encodeURIComponent(
+    String(vmid)
+  )}&node=${encodeURIComponent(node)}&resize=scale`;
+}
+
+async function getSessionById(sessionId) {
+  const response = await getSession(sessionId);
+  return response.payload.session || null;
+}
+
+async function listProxmoxStorageContent(provider, node, storage) {
+  return (
+    (await proxmoxRequest(
+      provider,
+      `/api2/json/nodes/${encodeURIComponent(node)}/storage/${encodeURIComponent(storage)}/content`
+    )) || []
+  );
+}
+
+async function resolveProxmoxInstallerIsoVolid(provider, runtimeSpec) {
+  const node = getProviderConfigValue(provider, "node");
+  const isoStorage = getProviderConfigValue(provider, "isoStorage") || "local";
+  const configuredVolid = getProviderConfigValue(provider, "installerIsoVolid");
+
+  if (!node) {
+    throw new Error("Proxmox provider is missing node");
+  }
+
+  if (configuredVolid) {
+    return configuredVolid;
+  }
+
+  const content = await listProxmoxStorageContent(provider, node, isoStorage);
+  const distributionId = String(runtimeSpec?.distributionId || "");
+  const patterns = [];
+
+  if (distributionId === "xubuntu-24.04" || distributionId === "ubuntu-24.04") {
+    patterns.push(/ubuntu-24\.04.*live-server.*\.iso$/i);
+    patterns.push(/ubuntu-24\.04.*\.iso$/i);
+  }
+
+  if (distributionId === "debian-12") {
+    patterns.push(/debian-12.*\.iso$/i);
+    patterns.push(/debian.*bookworm.*\.iso$/i);
+  }
+
+  const configuredPattern = getProviderConfigValue(provider, "installerIsoPattern");
+  if (configuredPattern) {
+    patterns.unshift(new RegExp(configuredPattern.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i"));
+  }
+
+  const matched = content.find((entry) => {
+    if (entry.content !== "iso") {
+      return false;
+    }
+
+    return patterns.some((pattern) => pattern.test(String(entry.volid || "")));
+  });
+
+  if (!matched) {
+    throw new Error(
+      `No installer ISO was found on Proxmox storage '${isoStorage}'. Upload an Ubuntu 24.04 live-server ISO or set installerIsoVolid in the provider config.`
+    );
+  }
+
+  return matched.volid;
+}
+
+function buildAutoinstallMetaData(sessionId) {
+  return `instance-id: ${sessionId}\nlocal-hostname: virtualworkstation\n`;
+}
+
+function buildAutoinstallUserData(sessionId, runtimeSpec, provider) {
+  const vmUsername = getProviderConfigValue(provider, "vmUsername") || "demo";
+  const vmPassword = getProviderConfigValue(provider, "vmPassword") || "demo";
+  const timezone = getProviderConfigValue(provider, "timezone") || "Europe/London";
+  const keyboardLayout = getProviderConfigValue(provider, "keyboardLayout") || "gb";
+  const locale = getProviderConfigValue(provider, "locale") || "en_GB.UTF-8";
+  const hostname = `vw-${sessionId.slice(0, 8)}`;
+  const xubuntuTarget =
+    runtimeSpec.distributionId === "xubuntu-24.04"
+      ? "xubuntu-desktop"
+      : runtimeSpec.interfaceId === "gnome"
+        ? "ubuntu-desktop"
+        : "ubuntu-desktop";
+
+  return `#cloud-config
+autoinstall:
+  version: 1
+  locale: ${locale}
+  refresh-installer:
+    update: true
+  keyboard:
+    layout: ${keyboardLayout}
+  timezone: ${timezone}
+  ssh:
+    install-server: true
+    allow-pw: true
+  storage:
+    layout:
+      name: direct
+  apt:
+    preserve_sources_list: false
+  packages:
+    - qemu-guest-agent
+    - sudo
+    - ${xubuntuTarget}
+  user-data:
+    hostname: ${hostname}
+    disable_root: false
+    package_update: true
+    package_upgrade: true
+    timezone: ${timezone}
+    users:
+      - default
+      - name: ${vmUsername}
+        gecos: Virtual Workstation User
+        sudo: ALL=(ALL) NOPASSWD:ALL
+        shell: /bin/bash
+        lock_passwd: false
+    chpasswd:
+      expire: false
+      users:
+        - name: ${vmUsername}
+          password: ${vmPassword}
+          type: text
+  late-commands:
+    - curtin in-target --target=/target -- systemctl enable qemu-guest-agent
+    - curtin in-target --target=/target -- systemctl set-default graphical.target
+  shutdown: reboot
+`;
+}
+
+function mapCharacterToQemuKey(char) {
+  if (/^[a-z0-9]$/.test(char)) {
+    return char;
+  }
+
+  const mapping = {
+    " ": "spc",
+    "-": "minus",
+    ".": "dot",
+    "/": "slash",
+    ":": "shift-semicolon",
+    ";": "semicolon",
+    "\\": "backslash",
+    "=": "equal",
+  };
+
+  if (mapping[char]) {
+    return mapping[char];
+  }
+
+  throw new Error(`Unsupported boot automation character '${char}'`);
+}
+
+async function sendQemuKey(provider, node, vmid, key) {
+  await runProxmoxMonitorCommand(provider, node, vmid, `sendkey ${key}`);
+}
+
+async function sendQemuText(provider, node, vmid, text) {
+  for (const character of String(text || "")) {
+    await sendQemuKey(provider, node, vmid, mapCharacterToQemuKey(character));
+    await sleep(60);
+  }
+}
+
+async function automateUbuntuAutoinstallBoot(provider, node, vmid, seedBaseUrl, seedPaths) {
+  const seedFromUrl = `${seedBaseUrl}${seedPaths.basePath}/`;
+  const bootParameters = ` autoinstall ds=nocloud-net\\;s=${seedFromUrl} ---`;
+
+  await sleep(5000);
+
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    await sendQemuKey(provider, node, vmid, "esc");
+    await sleep(400);
+  }
+
+  await sendQemuKey(provider, node, vmid, "e");
+  await sleep(1200);
+
+  // Walk down to the kernel line rather than editing the title/setparams line.
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    await sendQemuKey(provider, node, vmid, "down");
+    await sleep(250);
+  }
+
+  await sendQemuKey(provider, node, vmid, "end");
+  await sleep(300);
+  await sendQemuKey(provider, node, vmid, "backspace");
+  await sleep(120);
+  await sendQemuKey(provider, node, vmid, "backspace");
+  await sleep(120);
+  await sendQemuKey(provider, node, vmid, "backspace");
+  await sleep(200);
+  await sendQemuText(provider, node, vmid, bootParameters);
+  await sleep(300);
+  await sendQemuKey(provider, node, vmid, "ctrl-x");
+}
+
+async function createProxmoxVirtualMachineShell(sessionId, userId, runtimeSpec, provider, installerIsoVolid) {
+  const node = getProviderConfigValue(provider, "node");
+  const storage = getProviderConfigValue(provider, "storage");
+  const networkBridge = getProviderConfigValue(provider, "networkBridge") || "vmbr0";
+
+  if (!node) {
+    throw new Error("Proxmox provider is missing node");
+  }
+
+  if (!storage) {
+    throw new Error("Proxmox provider is missing storage");
+  }
+
+  const vmid = String(await proxmoxRequest(provider, "/api2/json/cluster/nextid"));
+  const vmName = `vws-${String(userId).replace(/[^a-zA-Z0-9]/g, "").slice(0, 8)}-${sessionId.slice(0, 8)}`;
+  const diskGiB = Number(runtimeSpec?.resources?.storageGiB || 32);
+  const createTask = await proxmoxRequest(
+    provider,
+    `/api2/json/nodes/${encodeURIComponent(node)}/qemu`,
+    {
+      method: "POST",
+      body: {
+        vmid,
+        name: vmName,
+        memory: runtimeSpec.resources.memoryMiB,
+        cores: runtimeSpec.resources.cpus,
+        sockets: 1,
+        scsihw: "virtio-scsi-pci",
+        scsi0: `${storage}:${diskGiB}`,
+        ide2: `${installerIsoVolid},media=cdrom`,
+        net0: `virtio,bridge=${networkBridge}`,
+        ostype: "l26",
+        boot: "order=ide2;scsi0;net0",
+        vga: "std",
+        agent: 1,
+      },
+    }
+  );
+  await waitForProxmoxTask(provider, node, createTask);
+
+  return {
+    vmid,
+    vmName,
+    node,
+  };
+}
+
+async function runProxmoxMonitorCommand(provider, node, vmid, command) {
+  return proxmoxRequest(
+    provider,
+    `/api2/json/nodes/${encodeURIComponent(node)}/qemu/${encodeURIComponent(vmid)}/monitor`,
+    {
+      method: "POST",
+      body: {
+        command,
+      },
+    }
+  );
+}
+
+function proxmoxRequest(provider, apiPath, options = {}) {
+  return new Promise((resolve, reject) => {
+    const apiUrl = String(provider?.config?.apiUrl || "").trim();
+
+    if (!apiUrl) {
+      reject(new Error("Proxmox provider is missing apiUrl"));
+      return;
+    }
+
+    const baseUrl = new URL(apiUrl.endsWith("/") ? apiUrl : `${apiUrl}/`);
+    const target = new URL(apiPath.replace(/^\//, ""), baseUrl);
+    const transport = target.protocol === "https:" ? https : http;
+    const payload =
+      options.body && typeof options.body === "object"
+        ? new URLSearchParams(
+            Object.entries(options.body)
+              .filter(([, value]) => value !== undefined && value !== null && value !== "")
+              .map(([key, value]) => [key, String(value)])
+          ).toString()
+        : options.body || "";
+
+    const request = transport.request(
+      target,
+      {
+        method: options.method || "GET",
+        headers: {
+          Accept: "application/json",
+          Authorization: buildProxmoxAuthorizationHeader(provider),
+          ...(payload
+            ? {
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Content-Length": Buffer.byteLength(payload),
+              }
+            : {}),
+        },
+        rejectUnauthorized: provider?.config?.validateTls !== false,
+      },
+      (response) => {
+        let responseBody = "";
+        response.on("data", (chunk) => {
+          responseBody += chunk;
+        });
+        response.on("end", () => {
+          let parsed = {};
+
+          if (responseBody) {
+            try {
+              parsed = JSON.parse(responseBody);
+            } catch (error) {
+              reject(error);
+              return;
+            }
+          }
+
+          if ((response.statusCode || 500) >= 400) {
+            reject(
+              new Error(
+                parsed.errors
+                  ? JSON.stringify(parsed.errors)
+                  : parsed.message || parsed.error || responseBody || `Proxmox request failed with ${response.statusCode}`
+              )
+            );
+            return;
+          }
+
+          resolve(parsed.data);
+        });
+      }
+    );
+
+    request.on("error", reject);
+
+    if (payload) {
+      request.write(payload);
+    }
+
+    request.end();
+  });
+}
+
+async function waitForProxmoxTask(provider, node, upid) {
+  for (let attempt = 0; attempt < 120; attempt += 1) {
+    const status = await proxmoxRequest(
+      provider,
+      `/api2/json/nodes/${encodeURIComponent(node)}/tasks/${encodeURIComponent(upid)}/status`
+    );
+
+    if (status?.status === "stopped") {
+      if (status.exitstatus && status.exitstatus !== "OK") {
+        throw new Error(`Proxmox task failed: ${status.exitstatus}`);
+      }
+      return status;
+    }
+
+    await sleep(2000);
+  }
+
+  throw new Error("Timed out waiting for Proxmox task completion");
+}
+
+async function provisionProxmoxVirtualMachine(sessionId, userId, runtimeSpec, reportBuildProgress) {
+  const provider = runtimeSpec.providerRecord;
+  const node = String(provider?.config?.node || "").trim();
+  const templateVmid = String(provider?.config?.templateVmid || "").trim();
+  const buildStrategy = getProviderConfigValue(provider, "buildStrategy") || "iso-unattended";
+
+  if (!node) {
+    throw new Error("Proxmox provider is missing node");
+  }
+
+  if (buildStrategy === "template-clone" && templateVmid) {
+    reportBuildProgress?.("Allocating Proxmox VM identifier...");
+    const vmid = await proxmoxRequest(provider, "/api2/json/cluster/nextid");
+    const vmName = `vws-${String(userId).replace(/[^a-zA-Z0-9]/g, "").slice(0, 8)}-${sessionId.slice(0, 8)}`;
+
+    reportBuildProgress?.("Cloning virtual machine template on Proxmox...");
+    const cloneTask = await proxmoxRequest(
+      provider,
+      `/api2/json/nodes/${encodeURIComponent(node)}/qemu/${encodeURIComponent(templateVmid)}/clone`,
+      {
+        method: "POST",
+        body: {
+          newid: vmid,
+          name: vmName,
+          full: 1,
+          target: node,
+          storage: provider?.config?.storage || undefined,
+        },
+      }
+    );
+    await waitForProxmoxTask(provider, node, cloneTask);
+
+    reportBuildProgress?.("Applying CPU and memory sizing...");
+    const configTask = await proxmoxRequest(
+      provider,
+      `/api2/json/nodes/${encodeURIComponent(node)}/qemu/${encodeURIComponent(vmid)}/config`,
+      {
+        method: "POST",
+        body: {
+          cores: runtimeSpec.resources.cpus,
+          memory: runtimeSpec.resources.memoryMiB,
+          name: vmName,
+        },
+      }
+    );
+    await waitForProxmoxTask(provider, node, configTask);
+
+    reportBuildProgress?.("Starting virtual machine on Proxmox...");
+    const startTask = await proxmoxRequest(
+      provider,
+      `/api2/json/nodes/${encodeURIComponent(node)}/qemu/${encodeURIComponent(vmid)}/status/start`,
+      { method: "POST" }
+    );
+    await waitForProxmoxTask(provider, node, startTask);
+
+    const consoleUrl = buildProxmoxConsoleUrl(provider, vmid);
+
+    return {
+      state: "ready",
+      statusDetail: "Virtual machine is running on Proxmox.",
+      connection: consoleUrl
+        ? {
+            type: "browser",
+            url: consoleUrl,
+          }
+        : null,
+      provisionedResource: {
+        kind: "proxmox-vm",
+        node,
+        vmid: String(vmid),
+        name: vmName,
+      },
+    };
+  }
+
+  const installToken = crypto.randomUUID();
+  const seedBaseUrl = getSeedBaseUrl(provider);
+  const seedPaths = buildSeedPaths(sessionId, installToken);
+  const installerIsoVolid = await resolveProxmoxInstallerIsoVolid(provider, runtimeSpec);
+
+  reportBuildProgress?.("Creating Proxmox virtual machine shell...");
+  const vm = await createProxmoxVirtualMachineShell(
+    sessionId,
+    userId,
+    runtimeSpec,
+    provider,
+    installerIsoVolid
+  );
+  const autoinstall = {
+    mode: "ubuntu-live-server-over-http",
+    installToken,
+    seedBaseUrl,
+    installerIsoVolid,
+    seedFromUrl: `${seedBaseUrl}${seedPaths.basePath}/`,
+    userDataUrl: `${seedBaseUrl}${seedPaths.userDataPath}`,
+    metaDataUrl: `${seedBaseUrl}${seedPaths.metaDataPath}`,
+  };
+  const provisionedResource = {
+    kind: "proxmox-vm",
+    node: vm.node,
+    vmid: String(vm.vmid),
+    name: vm.vmName,
+  };
+
+  await updateSession(sessionId, {
+    resolvedRuntimeSpec: {
+      ...sanitizeRuntimeSpecForPersistence(runtimeSpec),
+      proxmoxAutoinstall: autoinstall,
+      provisionedResource,
+    },
+  });
+
+  try {
+    reportBuildProgress?.("Starting Proxmox installer VM...");
+    const startTask = await proxmoxRequest(
+      provider,
+      `/api2/json/nodes/${encodeURIComponent(vm.node)}/qemu/${encodeURIComponent(vm.vmid)}/status/start`,
+      { method: "POST" }
+    );
+    await waitForProxmoxTask(provider, vm.node, startTask);
+
+    reportBuildProgress?.("Checking Proxmox monitor permissions for unattended boot automation...");
+    try {
+      await runProxmoxMonitorCommand(provider, vm.node, vm.vmid, "info status");
+    } catch (error) {
+      if (String(error.message || "").includes("Sys.Audit|Sys.Modify")) {
+        throw new Error(
+          "Proxmox VM creation succeeded, but zero-touch ISO boot automation is blocked. Grant the API token Sys.Audit and Sys.Modify on VM paths so the platform can inject the Ubuntu autoinstall boot parameters."
+        );
+      }
+
+      throw error;
+    }
+
+    reportBuildProgress?.("Injecting Ubuntu autoinstall boot parameters...");
+    await automateUbuntuAutoinstallBoot(
+      provider,
+      vm.node,
+      vm.vmid,
+      seedBaseUrl,
+      seedPaths
+    );
+
+    reportBuildProgress?.("Waiting for the installer VM to fetch its unattended install seed...");
+    const consoleUrl = buildProxmoxConsoleUrl(provider, vm.vmid);
+
+    return {
+      state: "launching",
+      statusDetail:
+        "Installer VM started and boot automation was injected. Waiting for Ubuntu autoinstall to start on Proxmox.",
+      connection: consoleUrl
+        ? {
+            type: "browser",
+            url: consoleUrl,
+          }
+        : null,
+      provisionedResource,
+      autoinstall,
+    };
+  } catch (error) {
+    try {
+      const deleteTask = await proxmoxRequest(
+        provider,
+        `/api2/json/nodes/${encodeURIComponent(vm.node)}/qemu/${encodeURIComponent(
+          vm.vmid
+        )}?purge=1&destroy-unreferenced-disks=1`,
+        {
+          method: "DELETE",
+        }
+      );
+      await waitForProxmoxTask(provider, vm.node, deleteTask);
+    } catch (cleanupError) {
+      console.error(
+        `failed to clean up provisional Proxmox VM ${vm.vmid}: ${cleanupError.message}`
+      );
+    }
+
+    throw error;
+  }
+}
+
+function resolveProviderSelection(catalog, providers, request) {
+  const machineTypes = catalog.machineTypes || defaultMachineTypes();
+  const machineTypeId =
+    request.machineTypeId || catalog.policies?.defaultMachineTypeId || machineTypes[0]?.id || "container";
+  const machineType = machineTypes.find((entry) => entry.id === machineTypeId) || null;
+  const enabledProviders = (providers || []).filter((entry) => entry.enabled);
+  const providerId =
+    request.providerId ||
+    enabledProviders.find(
+      (entry) => entry.kind === machineTypeId && entry.default
+    )?.id ||
+    enabledProviders.find((entry) => entry.kind === machineTypeId)?.id ||
+    null;
+  const provider =
+    enabledProviders.find((entry) => entry.id === providerId) || null;
+
+  return {
+    machineTypes,
+    machineTypeId,
+    machineType,
+    providerId,
+    provider,
+    providers: enabledProviders,
   };
 }
 
@@ -391,7 +1134,10 @@ async function buildRuntimeImageOnce(targetImage, buildSpec, onProgress) {
     throw new Error("No build definition is available for this runtime profile");
   }
 
-  const buildArgs = ["build", "--pull", "-t", targetImage];
+  const useBuildKit = await isBuildxAvailable();
+  const buildArgs = useBuildKit
+    ? ["buildx", "build", "--load", "--progress", "plain", "--pull", "-t", targetImage]
+    : ["build", "--pull", "-t", targetImage];
   const dockerfilePath = resolveSourcePath(buildSpec.dockerfile);
   const contextPath = resolveSourcePath(buildSpec.context || ".");
   const cacheKey = buildSpec.cacheKey || null;
@@ -413,7 +1159,6 @@ async function buildRuntimeImageOnce(targetImage, buildSpec, onProgress) {
 
   buildArgs.push(contextPath);
 
-  const useBuildKit = await isBuildxAvailable();
   onProgress?.(
     useBuildKit
       ? "Preparing runtime image with BuildKit..."
@@ -421,9 +1166,7 @@ async function buildRuntimeImageOnce(targetImage, buildSpec, onProgress) {
   );
 
   await runDocker(buildArgs, {
-    env: {
-      DOCKER_BUILDKIT: useBuildKit ? "1" : "0",
-    },
+    env: useBuildKit ? {} : { DOCKER_BUILDKIT: "0" },
     onLine: (line) => {
       const nextStatus = mapBuildOutputToStatus(line);
       if (nextStatus) {
@@ -769,6 +1512,72 @@ async function removeSessionContainers(session) {
   }
 }
 
+async function stopProxmoxVirtualMachine(session) {
+  const resource = getSessionRuntimeResource(session);
+  const provider = await getProviderRecordForSession(session);
+
+  if (!resource || resource.kind !== "proxmox-vm" || !provider) {
+    return;
+  }
+
+  const task = await proxmoxRequest(
+    provider,
+    `/api2/json/nodes/${encodeURIComponent(resource.node)}/qemu/${encodeURIComponent(resource.vmid)}/status/stop`,
+    { method: "POST" }
+  );
+  await waitForProxmoxTask(provider, resource.node, task);
+}
+
+async function deleteProxmoxVirtualMachine(session) {
+  const resource = getSessionRuntimeResource(session);
+  const provider = await getProviderRecordForSession(session);
+
+  if (!resource || resource.kind !== "proxmox-vm" || !provider) {
+    return;
+  }
+
+  try {
+    await stopProxmoxVirtualMachine(session);
+  } catch (error) {
+    if (!String(error.message || "").includes("VM is not running")) {
+      throw error;
+    }
+  }
+
+  const task = await proxmoxRequest(
+    provider,
+    `/api2/json/nodes/${encodeURIComponent(resource.node)}/qemu/${encodeURIComponent(
+      resource.vmid
+    )}?purge=1&destroy-unreferenced-disks=1`,
+    {
+      method: "DELETE",
+    }
+  );
+  await waitForProxmoxTask(provider, resource.node, task);
+}
+
+async function stopRuntimeResource(session) {
+  const providerDriver = session?.resolvedRuntimeSpec?.provider?.driver;
+
+  if (providerDriver === "proxmox") {
+    await stopProxmoxVirtualMachine(session);
+    return;
+  }
+
+  await removeSessionContainers(session);
+}
+
+async function deleteRuntimeResource(session) {
+  const providerDriver = session?.resolvedRuntimeSpec?.provider?.driver;
+
+  if (providerDriver === "proxmox") {
+    await deleteProxmoxVirtualMachine(session);
+    return;
+  }
+
+  await removeSessionContainers(session);
+}
+
 function isActiveSessionState(state) {
   return ["ready", "running", "launching", "building"].includes(state);
 }
@@ -804,10 +1613,10 @@ function isStaleProvisioningSession(session) {
 async function stopSessionRecord(session) {
   await updateSession(session.id, {
     state: "stopping",
-    statusDetail: "Stopping workstation container...",
+    statusDetail: "Stopping workstation runtime...",
   });
 
-  await removeSessionContainers(session);
+  await stopRuntimeResource(session);
 
   const patched = await updateSession(session.id, {
     state: "stopped",
@@ -821,7 +1630,7 @@ async function stopSessionRecord(session) {
 }
 
 async function deleteSessionWithContainers(session) {
-  await removeSessionContainers(session);
+  await deleteRuntimeResource(session);
   const deleted = await deleteSessionRecord(session.id);
   return deleted.payload.session || null;
 }
@@ -853,7 +1662,7 @@ async function reconcileSessionContainers() {
         continue;
       }
 
-      await removeSessionContainers(session);
+      await deleteRuntimeResource(session);
       await updateSession(session.id, {
         state: "error",
         statusDetail:
@@ -950,6 +1759,38 @@ async function provisionSession(sessionId, userId, runtimeSpec) {
       });
     };
 
+    if (runtimeSpec.provider?.driver === "proxmox") {
+      await updateSession(sessionId, {
+        state: "building",
+        statusDetail: "Preparing Proxmox virtual machine...",
+      });
+
+      const vmRuntime = await provisionProxmoxVirtualMachine(
+        sessionId,
+        userId,
+        runtimeSpec,
+        reportBuildProgress
+      );
+
+      await updateSession(sessionId, {
+        state: vmRuntime.state,
+        statusDetail: vmRuntime.statusDetail,
+        connection: vmRuntime.connection,
+        resolvedRuntimeSpec: {
+          ...sanitizeRuntimeSpecForPersistence(runtimeSpec),
+          proxmoxAutoinstall: vmRuntime.autoinstall || runtimeSpec.proxmoxAutoinstall || null,
+          provisionedResource: vmRuntime.provisionedResource,
+        },
+        lifecycleCapabilities: {
+          stop: true,
+          restart: false,
+          hibernate: true,
+          resume: false,
+        },
+      });
+      return;
+    }
+
     await updateSession(sessionId, {
       state: "building",
       statusDetail: "Preparing runtime image...",
@@ -978,7 +1819,7 @@ async function provisionSession(sessionId, userId, runtimeSpec) {
         type: "browser",
         url: connectionUrl,
       },
-      resolvedRuntimeSpec: runtimeSpec,
+      resolvedRuntimeSpec: sanitizeRuntimeSpecForPersistence(runtimeSpec),
       lifecycleCapabilities: {
         stop: true,
         restart: false,
@@ -1000,7 +1841,10 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if (req.method === "GET" && req.url === "/health") {
+  const requestUrl = getLocalRequestUrl(req);
+  const pathname = requestUrl.pathname;
+
+  if (req.method === "GET" && pathname === "/health") {
     json(res, 200, {
       service: "workspace-service",
       status: "ok",
@@ -1012,20 +1856,76 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if (req.method === "GET" && req.url === "/v1/workspaces/catalog") {
-    const catalog = loadCatalog();
-    json(res, 200, {
-      version: catalog.version || 1,
-      distributions: catalog.distributions || [],
-      interfaces: catalog.interfaces || [],
-      instanceSizes: catalog.instanceSizes || [],
-      runtimeProfiles: catalog.runtimeProfiles || [],
-      policies: catalog.policies || {},
-    });
+  if (req.method === "GET" && pathname.startsWith("/v1/install-seeds/")) {
+    const parts = pathname.split("/").filter(Boolean);
+    const sessionId = parts[2];
+    const token = parts[3];
+    const kind = parts[4];
+
+    if (!sessionId || !["meta-data", "user-data"].includes(kind)) {
+      text(res, 404, "Not found\n");
+      return;
+    }
+
+    try {
+      const session = await getSessionById(sessionId);
+      const autoinstall = session?.resolvedRuntimeSpec?.proxmoxAutoinstall || null;
+      const provider = session?.resolvedRuntimeSpec?.providerRecord || null;
+
+      if (!session || !autoinstall || !provider || token !== autoinstall.installToken) {
+        text(res, 404, "Not found\n");
+        return;
+      }
+
+      console.log(`served install seed ${kind} for session ${sessionId}`);
+
+      if (kind === "meta-data") {
+        text(res, 200, buildAutoinstallMetaData(sessionId));
+        return;
+      }
+
+      text(
+        res,
+        200,
+        buildAutoinstallUserData(sessionId, session.resolvedRuntimeSpec, provider),
+        "text/yaml; charset=utf-8"
+      );
+    } catch (error) {
+      text(res, 500, `${error.message}\n`);
+    }
     return;
   }
 
-  if (req.method === "POST" && req.url === "/v1/admin/cleanup") {
+  if (req.method === "GET" && pathname === "/v1/workspaces/catalog") {
+    try {
+      const catalog = loadCatalog();
+      const providers = await listProviders();
+      json(res, 200, {
+        version: catalog.version || 1,
+        machineTypes: catalog.machineTypes || defaultMachineTypes(),
+        machineProviders: providers
+          .filter((entry) => entry.enabled)
+          .map((entry) => sanitizeProviderRecord(entry)),
+        distributions: catalog.distributions || [],
+        interfaces: catalog.interfaces || [],
+        instanceSizes: catalog.instanceSizes || [],
+        runtimeProfiles: catalog.runtimeProfiles || [],
+        policies: {
+          defaultMachineTypeId:
+            catalog.policies?.defaultMachineTypeId || "container",
+          ...catalog.policies,
+        },
+      });
+    } catch (error) {
+      json(res, 502, {
+        error: "Unable to load workspace catalog",
+        detail: error.message,
+      });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && pathname === "/v1/admin/cleanup") {
     const authorization = req.headers.authorization || "";
     const identity = verifyToken(authorization);
 
@@ -1057,7 +1957,7 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if (req.method === "GET" && req.url === "/v1/admin/sessions") {
+  if (req.method === "GET" && pathname === "/v1/admin/sessions") {
     const authorization = req.headers.authorization || "";
     const identity = verifyToken(authorization);
 
@@ -1083,7 +1983,7 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if (req.method === "POST" && req.url === "/v1/admin/sessions/stop-all") {
+  if (req.method === "POST" && pathname === "/v1/admin/sessions/stop-all") {
     const authorization = req.headers.authorization || "";
     const identity = verifyToken(authorization);
 
@@ -1137,7 +2037,7 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if (req.method === "POST" && req.url === "/v1/admin/sessions/remove-inactive") {
+  if (req.method === "POST" && pathname === "/v1/admin/sessions/remove-inactive") {
     const authorization = req.headers.authorization || "";
     const identity = verifyToken(authorization);
 
@@ -1207,7 +2107,7 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if (req.method === "POST" && req.url === "/v1/workspaces/launch") {
+  if (req.method === "POST" && pathname === "/v1/workspaces/launch") {
     const authorization = req.headers.authorization || "";
     const identity = verifyToken(authorization);
 
@@ -1219,7 +2119,20 @@ const server = http.createServer(async (req, res) => {
     const body = await readRequestBody(req);
     const request = body ? JSON.parse(body) : {};
     const catalog = loadCatalog();
+    const providers = await listProviders();
     const selection = resolveCatalogSelections(catalog, request);
+    const providerSelection = resolveProviderSelection(catalog, providers, request);
+
+    if (!providerSelection.machineType || !providerSelection.provider) {
+      json(res, 400, {
+        error: "Unsupported machine provider selection",
+        requested: {
+          machineTypeId: providerSelection.machineTypeId,
+          providerId: providerSelection.providerId,
+        },
+      });
+      return;
+    }
 
     if (
       !selection.distribution ||
@@ -1233,6 +2146,8 @@ const server = http.createServer(async (req, res) => {
           distributionId: selection.distributionId,
           interfaceId: selection.interfaceId,
           instanceSizeId: selection.instanceSizeId,
+          machineTypeId: providerSelection.machineTypeId,
+          providerId: providerSelection.providerId,
         },
       });
       return;
@@ -1241,6 +2156,23 @@ const server = http.createServer(async (req, res) => {
     try {
       const sessionId = crypto.randomUUID();
       const runtimeSpec = buildRuntimeSpec(selection);
+      const internalRuntimeSpec = buildRuntimeSpec(selection);
+      const initialStatusDetail =
+        providerSelection.provider.driver === "proxmox"
+          ? "Preparing Proxmox virtual machine..."
+          : "Preparing runtime image...";
+      for (const spec of [runtimeSpec, internalRuntimeSpec]) {
+        spec.machineTypeId = providerSelection.machineType.id;
+        spec.provider = {
+          id: providerSelection.provider.id,
+          name: providerSelection.provider.name,
+          driver: providerSelection.provider.driver,
+          kind: providerSelection.provider.kind,
+          scope: providerSelection.provider.scope,
+        };
+      }
+      internalRuntimeSpec.providerRecord = providerSelection.provider;
+      runtimeSpec.providerRecord = sanitizeProviderRecord(providerSelection.provider);
       const createSessionResponse = await forwardJson(
         "/v1/sessions",
         "POST",
@@ -1251,14 +2183,16 @@ const server = http.createServer(async (req, res) => {
           distributionId: selection.distribution.id,
           interfaceId: selection.runtimeInterface.id,
           instanceSizeId: selection.instanceSize.id,
+          machineTypeId: providerSelection.machineType.id,
+          providerId: providerSelection.provider.id,
           profileId: selection.runtimeProfile.id,
           state: "building",
-          statusDetail: "Preparing runtime image...",
+          statusDetail: initialStatusDetail,
           resolvedRuntimeSpec: runtimeSpec,
           lifecycleCapabilities: {
             stop: true,
             restart: false,
-            hibernate: false,
+            hibernate: providerSelection.machineType.id === "virtual-machine",
             resume: false,
           },
         })
@@ -1272,15 +2206,33 @@ const server = http.createServer(async (req, res) => {
         return;
       }
 
-      provisionSession(sessionId, identity.sub, runtimeSpec);
+      if (
+        providerSelection.provider.driver === "docker" &&
+        providerSelection.machineType.id === "container"
+      ) {
+        provisionSession(sessionId, identity.sub, internalRuntimeSpec);
+      } else if (
+        providerSelection.provider.driver === "proxmox" &&
+        providerSelection.machineType.id === "virtual-machine"
+      ) {
+        provisionSession(sessionId, identity.sub, internalRuntimeSpec);
+      } else {
+        updateSession(sessionId, {
+          state: "error",
+          statusDetail:
+            `Provider plugin '${providerSelection.provider.name}' is configured, but VM provisioning is not implemented yet in this runtime.`,
+        }).catch(() => {});
+      }
 
       json(res, 202, {
         sessionId,
         state: "building",
-        statusDetail: "Preparing runtime image...",
+        statusDetail: initialStatusDetail,
         distributionId: selection.distribution.id,
         interfaceId: selection.runtimeInterface.id,
         instanceSizeId: selection.instanceSize.id,
+        machineTypeId: providerSelection.machineType.id,
+        providerId: providerSelection.provider.id,
         desktopEnvironment: selection.runtimeInterface.id,
         connection: null,
         runtimePlan: {
@@ -1288,6 +2240,8 @@ const server = http.createServer(async (req, res) => {
           image: runtimeSpec.image,
           protocol: runtimeSpec.protocol,
           resources: runtimeSpec.resources,
+          machineType: providerSelection.machineType,
+          provider: runtimeSpec.provider,
           launchOrigin: publicBaseUrl,
         },
       });
@@ -1302,8 +2256,8 @@ const server = http.createServer(async (req, res) => {
 
   if (
     req.method === "POST" &&
-    req.url.startsWith("/v1/workspaces/") &&
-    req.url.endsWith("/stop")
+    pathname.startsWith("/v1/workspaces/") &&
+    pathname.endsWith("/stop")
   ) {
     const authorization = req.headers.authorization || "";
     const identity = verifyToken(authorization);
@@ -1313,7 +2267,7 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    const sessionId = req.url.split("/").filter(Boolean)[2];
+    const sessionId = pathname.split("/").filter(Boolean)[2];
 
     try {
       const response = await getSession(sessionId);
@@ -1342,7 +2296,7 @@ const server = http.createServer(async (req, res) => {
 
   if (
     req.method === "DELETE" &&
-    req.url.startsWith("/v1/workspaces/")
+    pathname.startsWith("/v1/workspaces/")
   ) {
     const authorization = req.headers.authorization || "";
     const identity = verifyToken(authorization);
@@ -1352,7 +2306,7 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    const sessionId = req.url.split("/").filter(Boolean)[2];
+    const sessionId = pathname.split("/").filter(Boolean)[2];
 
     try {
       const response = await getSession(sessionId);
