@@ -59,6 +59,14 @@
       .panel h2 { margin: 0 0 8px; font-size: 21px; }
       .panel p { margin: 0 0 16px; color: var(--muted); line-height: 1.5; }
       .iso-list, .profile-list { display: grid; gap: 14px; }
+      .panel-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 8px;
+      }
+      .panel-head h2 { margin: 0; }
       .iso-card, .profile-card {
         border: 1px solid var(--line);
         border-radius: 16px;
@@ -66,6 +74,26 @@
         background: #fbfdfd;
       }
       .iso-card strong, .profile-card strong { display: block; margin-bottom: 4px; }
+      .title-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        border-radius: 999px;
+        padding: 3px 9px;
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.01em;
+        text-transform: uppercase;
+      }
+      .pill-new {
+        background: #dff7ef;
+        color: #116149;
+      }
       .meta { color: var(--muted); font-size: 14px; line-height: 1.45; }
       .field-grid {
         display: grid;
@@ -160,7 +188,10 @@
       <section class="grid">
         <div style="display:grid; gap:20px;">
           <article class="panel">
-            <h2>Proxmox Installer Images</h2>
+            <div class="panel-head">
+              <h2>Proxmox Installer Images</h2>
+              <button id="refreshIsoListButton" class="secondary" type="button">Refresh ISO List</button>
+            </div>
             <p>Current ISO content from the configured Proxmox storage. Select a volume ID when defining an image profile.</p>
             <div class="field-grid" style="margin-bottom:16px;">
               <div class="field full">
@@ -296,6 +327,7 @@
       const isoUploadFileEl = document.getElementById("isoUploadFile");
       const downloadIsoButtonEl = document.getElementById("downloadIsoButton");
       const uploadIsoButtonEl = document.getElementById("uploadIsoButton");
+      const refreshIsoListButtonEl = document.getElementById("refreshIsoListButton");
       const isoUploadProgressEl = document.getElementById("isoUploadProgress");
       const isoUploadProgressLabelEl = document.getElementById("isoUploadProgressLabel");
       const isoUploadProgressValueEl = document.getElementById("isoUploadProgressValue");
@@ -355,13 +387,16 @@
         downloadIsoButtonEl.disabled = isBusy;
         uploadIsoButtonEl.disabled = isBusy;
         reloadButtonEl.disabled = isBusy;
+        refreshIsoListButtonEl.disabled = isBusy;
       }
 
-      function showUploadProgress(label, percent, indeterminate = false) {
+      function showUploadProgress(label, percent, indeterminate = false, detail = "") {
         isoUploadProgressEl.classList.remove("hidden");
         isoUploadProgressLabelEl.textContent = label;
         isoUploadProgressBarEl.removeAttribute("value");
-        isoUploadProgressValueEl.textContent = indeterminate ? "Working..." : `${percent}%`;
+        isoUploadProgressValueEl.textContent = indeterminate
+          ? detail || "Working..."
+          : `${percent}%`;
 
         if (!indeterminate) {
           isoUploadProgressBarEl.value = Math.max(0, Math.min(100, percent));
@@ -423,10 +458,14 @@
               .map(
                 (entry) => `
                   <div class="iso-card">
-                    <strong>${entry.volid}</strong>
+                    <div class="title-row">
+                      <strong>${entry.volid}</strong>
+                      ${isRecentlyUploaded(entry) ? '<span class="pill pill-new">New</span>' : ""}
+                    </div>
                     <div class="meta">
                       Storage: ${entry.storage || "n/a"}<br />
-                      Size: ${entry.size || "n/a"}
+                      Size: ${formatBytes(entry.size)}<br />
+                      Uploaded: ${formatTimestamp(entry.ctime)}
                     </div>
                     <div class="inline-actions">
                       <button class="danger" data-delete-iso="${entry.volid}" type="button">Delete ISO</button>
@@ -534,14 +573,54 @@
         populateCatalogSelectors();
       }
 
-      async function loadProxmoxImages() {
+      function formatBytes(value) {
+        const number = Number(value || 0);
+        if (!Number.isFinite(number) || number <= 0) return "n/a";
+        const units = ["B", "KB", "MB", "GB", "TB"];
+        let unitIndex = 0;
+        let size = number;
+        while (size >= 1024 && unitIndex < units.length - 1) {
+          size /= 1024;
+          unitIndex += 1;
+        }
+        return `${size >= 10 || unitIndex === 0 ? size.toFixed(0) : size.toFixed(1)} ${units[unitIndex]}`;
+      }
+
+      function formatTimestamp(value) {
+        const seconds = Number(value || 0);
+        if (!Number.isFinite(seconds) || seconds <= 0) return "n/a";
+        return new Date(seconds * 1000).toLocaleString();
+      }
+
+      function isRecentlyUploaded(entry) {
+        const seconds = Number(entry?.ctime || 0);
+        if (!Number.isFinite(seconds) || seconds <= 0) return false;
+        return Date.now() - seconds * 1000 < 24 * 60 * 60 * 1000;
+      }
+
+      async function loadProxmoxImages(showStatus = false) {
         const response = await fetch("/api/admin/proxmox/images", {
           headers: { Authorization: `Bearer ${token}` },
         });
-        const payload = await response.json();
+
+        let payload = {};
+        try {
+          payload = await response.json();
+        } catch (error) {
+          payload = {};
+        }
+
+        if (!response.ok) {
+          throw new Error(payload.detail || payload.error || "Unable to load Proxmox images.");
+        }
+
         proxmoxImages = payload.images || [];
         populateIsoOptions();
         renderIsoList();
+
+        if (showStatus) {
+          setStatus(`Refreshed Proxmox ISO inventory. ${proxmoxImages.length} image(s) available.`);
+        }
       }
 
       async function importIsoFromUrl() {
@@ -571,8 +650,9 @@
           showUploadProgress("Refreshing Proxmox ISO inventory...", 100);
           await loadProxmoxImages();
           setStatus(
-            `Proxmox ISO import completed.\nFilename: ${payload.result?.filename || "n/a"}\nTask: ${
-              payload.result?.upid || "n/a"
+            `Proxmox ISO import completed.\nFilename: ${payload.result?.filename || "n/a"}\nVolume: ${
+              payload.result?.volid || "n/a"
+            }\nTask: ${payload.result?.upid || "n/a"
             }`
           );
         } finally {
@@ -603,11 +683,17 @@
 
         request.upload.onprogress = (event) => {
           if (!event.lengthComputable) {
-            showUploadProgress(`Uploading ${file.name} to the platform...`, 0, true);
+            showUploadProgress(
+              `Uploading ${file.name} to the platform...`,
+              0,
+              true,
+              "Browser upload in progress..."
+            );
             return;
           }
 
-          const percent = Math.round((event.loaded / event.total) * 100);
+          const rawPercent = event.total > 0 ? event.loaded / event.total : 0;
+          const percent = Math.min(95, Math.round(rawPercent * 95));
           showUploadProgress(`Uploading ${file.name} to the platform...`, percent);
         };
 
@@ -621,19 +707,26 @@
             return;
           }
 
-          showUploadProgress("Finalizing upload on Proxmox and refreshing inventory...", 100, true);
+          showUploadProgress(
+            "Finalizing upload on Proxmox...",
+            0,
+            true,
+            "Upload reached the platform. Waiting for Proxmox storage and inventory refresh..."
+          );
 
           try {
             isoUploadFileEl.value = "";
             await loadProxmoxImages();
+            showUploadProgress("Upload complete.", 100, false);
+            window.setTimeout(hideUploadProgress, 450);
             setStatus(
-              `Proxmox ISO upload completed.\nFilename: ${payload.result?.filename || file.name}\nTask: ${
-                payload.result?.upid || "n/a"
+              `Proxmox ISO upload completed.\nFilename: ${payload.result?.filename || file.name}\nVolume: ${
+                payload.result?.volid || "n/a"
+              }\nTask: ${payload.result?.upid || "n/a"
               }`
             );
           } finally {
             setIsoActionBusy(false);
-            window.setTimeout(hideUploadProgress, 700);
           }
         };
 
@@ -667,6 +760,7 @@
 
           showUploadProgress("Refreshing Proxmox ISO inventory...", 100);
           await loadProxmoxImages();
+          hideUploadProgress();
           setStatus(
             `Proxmox ISO removed.\nVolume: ${payload.result?.volid || volid}\nTask: ${
               payload.result?.upid || "n/a"
@@ -674,7 +768,6 @@
           );
         } finally {
           setIsoActionBusy(false);
-          window.setTimeout(hideUploadProgress, 700);
         }
       }
 
@@ -764,6 +857,18 @@
       });
       reloadButtonEl.addEventListener("click", async () => {
         await initialize();
+      });
+      refreshIsoListButtonEl.addEventListener("click", async () => {
+        try {
+          setIsoActionBusy(true);
+          showUploadProgress("Refreshing Proxmox ISO inventory...", 100, true);
+          await loadProxmoxImages(true);
+        } catch (error) {
+          setStatus(error.message || "Unable to refresh Proxmox ISO inventory.");
+        } finally {
+          setIsoActionBusy(false);
+          window.setTimeout(hideUploadProgress, 500);
+        }
       });
       downloadIsoButtonEl.addEventListener("click", async () => {
         await importIsoFromUrl();

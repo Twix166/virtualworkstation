@@ -31,7 +31,7 @@ Seeded providers:
 - `proxmox-primary`
   - kind: `virtual-machine`
   - driver: `proxmox`
-  - status: configuration scaffold only
+  - status: first working adapter implemented
 
 Each provider record contains:
 
@@ -53,6 +53,8 @@ The launch form now includes:
 - distribution
 - interface
 - instance size
+- install configuration for VM launches
+- reusable image profile selection for VM launches
 
 This allows the catalog to evolve without hard-coding Docker as the only backend.
 
@@ -77,29 +79,45 @@ When:
 the runtime service now:
 
 1. requests the next VM ID from the Proxmox cluster
-2. clones the configured template VM
-3. applies CPU and memory sizing from the selected instance size
-4. starts the cloned VM
+2. resolves the configured ISO-backed unattended build path
+3. applies CPU, memory, and storage sizing from the selected instance size
+4. starts the installer VM and injects unattended install boot parameters
 5. persists the resulting `node` and `vmid` into the session record
+
+The current implementation also includes:
+
+- browser console handoff to Proxmox noVNC for VM sessions
+- install-time locale, keyboard, timezone, and hostname selection
+- a dedicated Image Management page for ISO inventory and reusable VM image profiles
+- Proxmox ISO import from URL
+- Proxmox ISO upload from the browser
+- Proxmox ISO deletion from the browser
 
 Required provider configuration:
 
 - `apiUrl`
 - `node`
-- `templateVmid`
 - `tokenId`
 - `tokenSecret`
+- `storage`
+- `isoStorage`
 
 Optional provider configuration:
 
-- `storage`
 - `networkBridge`
 - `validateTls`
+- `seedBaseUrl`
+- `vmConsoleBaseUrl`
+- `vmUsername`
+- `vmPassword`
+- `installerIsoVolid`
+- `installerIsoPattern`
+- `buildStrategy`
 
 Current limitation:
 
-- the browser `Open` action currently links to the Proxmox web origin rather than a fully proxied
-  noVNC/SPICE console path
+- the browser `Open` action uses Proxmox console access rather than a gateway-proxied VM console
+- large ISO uploads are improved by streaming, but long-running upload/install UX still needs more polish
 - hibernate/resume and restart are not yet implemented for the VM path
 
 ### Local libvirt VM provider
@@ -120,8 +138,7 @@ Implement provider adapters in `workspace-service`:
 1. `docker`
    - existing implementation
 2. `proxmox`
-   - improve browser console handoff beyond the current Proxmox web-origin link
-   - size storage and network explicitly from provider/runtime selections
+   - improve browser console handoff beyond the current Proxmox noVNC deep link
    - add restart, hibernate, and resume lifecycle support
 3. `libvirt`
    - define or clone a libvirt domain

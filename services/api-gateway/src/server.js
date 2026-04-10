@@ -148,6 +148,40 @@ function forwardBuffer(targetBaseUrl, route, method, buffer, headers = {}) {
   });
 }
 
+function forwardStream(targetBaseUrl, route, method, sourceReq, headers = {}) {
+  return new Promise((resolve, reject) => {
+    const target = new URL(route, targetBaseUrl);
+    const request = http.request(
+      target,
+      {
+        method,
+        headers,
+      },
+      (response) => {
+        let responseBody = "";
+        response.setEncoding("utf8");
+        response.on("data", (chunk) => {
+          responseBody += chunk;
+        });
+        response.on("end", () => {
+          try {
+            resolve({
+              statusCode: response.statusCode || 500,
+              payload: responseBody ? JSON.parse(responseBody) : {},
+            });
+          } catch (error) {
+            reject(error);
+          }
+        });
+      }
+    );
+
+    request.on("error", reject);
+    sourceReq.on("error", reject);
+    sourceReq.pipe(request);
+  });
+}
+
 function serveStaticFile(filePath, res) {
   const extension = path.extname(filePath);
   const contentTypes = {
@@ -701,18 +735,21 @@ const server = http.createServer(async (req, res) => {
     }
 
     try {
-      const buffer = await readRequestBuffer(req);
-      const response = await forwardBuffer(
+      const forwardedHeaders = {
+        Authorization: req.headers.authorization || "",
+        "Content-Type": req.headers["content-type"] || "application/octet-stream",
+        "X-Upload-Filename": req.headers["x-upload-filename"] || "",
+      };
+      if (req.headers["content-length"]) {
+        forwardedHeaders["Content-Length"] = req.headers["content-length"];
+      }
+
+      const response = await forwardStream(
         workspaceServiceUrl,
         "/v1/admin/proxmox/images/upload",
         "POST",
-        buffer,
-        {
-          Authorization: req.headers.authorization || "",
-          "Content-Type": req.headers["content-type"] || "application/octet-stream",
-          "Content-Length": String(buffer.length),
-          "X-Upload-Filename": req.headers["x-upload-filename"] || "",
-        }
+        req,
+        forwardedHeaders
       );
       json(res, response.statusCode, response.payload);
     } catch (error) {

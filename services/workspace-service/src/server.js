@@ -3,6 +3,7 @@ const https = require("https");
 const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
+const os = require("os");
 const { execFile, spawn } = require("child_process");
 
 const port = Number(process.env.PORT || 8082);
@@ -46,6 +47,38 @@ function readRequestBuffer(req) {
     });
     req.on("end", () => resolve(Buffer.concat(chunks)));
     req.on("error", reject);
+  });
+}
+
+function streamRequestToTempFile(req, preferredName = "upload.iso") {
+  return new Promise((resolve, reject) => {
+    const safeName = sanitizeImportFilename(preferredName);
+    const tempPath = path.join(
+      os.tmpdir(),
+      `vw-upload-${Date.now()}-${crypto.randomUUID()}-${safeName}`
+    );
+    const output = fs.createWriteStream(tempPath);
+    let byteLength = 0;
+
+    req.on("data", (chunk) => {
+      byteLength += chunk.length;
+    });
+
+    req.on("error", (error) => {
+      output.destroy(error);
+    });
+    output.on("error", (error) => {
+      fs.promises.unlink(tempPath).catch(() => {});
+      reject(error);
+    });
+    output.on("finish", () => {
+      resolve({
+        tempPath,
+        byteLength,
+      });
+    });
+
+    req.pipe(output);
   });
 }
 
@@ -476,7 +509,12 @@ async function fetchRemoteFileBuffer(url) {
   return Buffer.from(arrayBuffer);
 }
 
-async function uploadBufferToProxmoxIso(provider, filename, fileBuffer, contentType = "application/octet-stream") {
+async function uploadFileToProxmoxIso(
+  provider,
+  filename,
+  filePath,
+  contentType = "application/octet-stream"
+) {
   const node = getProviderConfigValue(provider, "node");
   const isoStorage = getProviderConfigValue(provider, "isoStorage") || "local";
 
@@ -485,24 +523,19 @@ async function uploadBufferToProxmoxIso(provider, filename, fileBuffer, contentT
   }
 
   const boundary = `----vw-${crypto.randomUUID()}`;
-  const parts = [];
-  const push = (value) => {
-    parts.push(Buffer.isBuffer(value) ? value : Buffer.from(value));
-  };
-
-  push(`--${boundary}\r\n`);
-  push(`Content-Disposition: form-data; name="content"\r\n\r\n`);
-  push(`iso\r\n`);
-  push(`--${boundary}\r\n`);
-  push(
-    `Content-Disposition: form-data; name="filename"; filename="${sanitizeImportFilename(
-      filename
-    )}"\r\n`
+  const prefix = Buffer.from(
+    `--${boundary}\r\n` +
+      `Content-Disposition: form-data; name="content"\r\n\r\n` +
+      `iso\r\n` +
+      `--${boundary}\r\n` +
+      `Content-Disposition: form-data; name="filename"; filename="${sanitizeImportFilename(
+        filename
+      )}"\r\n` +
+      `Content-Type: ${contentType || "application/octet-stream"}\r\n\r\n`
   );
-  push(`Content-Type: ${contentType || "application/octet-stream"}\r\n\r\n`);
-  push(fileBuffer);
-  push(`\r\n--${boundary}--\r\n`);
-  const payload = Buffer.concat(parts);
+  const suffix = Buffer.from(`\r\n--${boundary}--\r\n`);
+  const fileStat = await fs.promises.stat(filePath);
+  const contentLength = prefix.length + fileStat.size + suffix.length;
 
   const apiUrl = getProviderConfigValue(provider, "apiUrl");
   if (!apiUrl) {
@@ -524,7 +557,7 @@ async function uploadBufferToProxmoxIso(provider, filename, fileBuffer, contentT
         headers: {
           Authorization: buildProxmoxAuthorizationHeader(provider),
           "Content-Type": `multipart/form-data; boundary=${boundary}`,
-          "Content-Length": String(payload.length),
+          "Content-Length": String(contentLength),
         },
         rejectUnauthorized: provider?.config?.validateTls !== false,
       },
@@ -561,9 +594,35 @@ async function uploadBufferToProxmoxIso(provider, filename, fileBuffer, contentT
     );
 
     request.on("error", reject);
-    request.write(payload);
-    request.end();
+
+    request.write(prefix);
+
+    const fileStream = fs.createReadStream(filePath);
+    fileStream.on("error", reject);
+    fileStream.on("end", () => {
+      request.end(suffix);
+    });
+    fileStream.pipe(request, { end: false });
   });
+}
+
+async function uploadBufferToProxmoxIso(
+  provider,
+  filename,
+  fileBuffer,
+  contentType = "application/octet-stream"
+) {
+  const tempPath = path.join(
+    os.tmpdir(),
+    `vw-buffer-${Date.now()}-${crypto.randomUUID()}-${sanitizeImportFilename(filename)}`
+  );
+
+  await fs.promises.writeFile(tempPath, fileBuffer);
+  try {
+    return await uploadFileToProxmoxIso(provider, filename, tempPath, contentType);
+  } finally {
+    await fs.promises.unlink(tempPath).catch(() => {});
+  }
 }
 
 async function uploadBufferToProxmoxIsoAndWait(
@@ -573,6 +632,8 @@ async function uploadBufferToProxmoxIsoAndWait(
   contentType = "application/octet-stream"
 ) {
   const node = getProviderConfigValue(provider, "node");
+  const isoStorage = getProviderConfigValue(provider, "isoStorage") || "local";
+  const expectedVolid = `${isoStorage}:iso/${sanitizeImportFilename(filename)}`;
 
   if (!node) {
     throw new Error("Proxmox provider is missing node");
@@ -581,9 +642,80 @@ async function uploadBufferToProxmoxIsoAndWait(
   const upid = await uploadBufferToProxmoxIso(provider, filename, fileBuffer, contentType);
   await waitForProxmoxTask(provider, node, upid);
 
+  let matchedImage = null;
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const images = await listProxmoxStorageContent(provider, node, isoStorage);
+    matchedImage = images.find(
+      (entry) =>
+        entry.content === "iso" &&
+        (entry.volid === expectedVolid ||
+          String(entry.volid || "").endsWith(`/${sanitizeImportFilename(filename)}`))
+    );
+
+    if (matchedImage) {
+      break;
+    }
+
+    await sleep(1000);
+  }
+
+  if (!matchedImage) {
+    throw new Error(
+      `Upload task completed but the ISO is not present on Proxmox storage '${isoStorage}'.`
+    );
+  }
+
   return {
     upid,
     filename,
+    volid: matchedImage.volid,
+  };
+}
+
+async function uploadFileToProxmoxIsoAndWait(
+  provider,
+  filename,
+  filePath,
+  contentType = "application/octet-stream"
+) {
+  const node = getProviderConfigValue(provider, "node");
+  const isoStorage = getProviderConfigValue(provider, "isoStorage") || "local";
+  const expectedVolid = `${isoStorage}:iso/${sanitizeImportFilename(filename)}`;
+
+  if (!node) {
+    throw new Error("Proxmox provider is missing node");
+  }
+
+  const upid = await uploadFileToProxmoxIso(provider, filename, filePath, contentType);
+  await waitForProxmoxTask(provider, node, upid);
+
+  let matchedImage = null;
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const images = await listProxmoxStorageContent(provider, node, isoStorage);
+    matchedImage = images.find(
+      (entry) =>
+        entry.content === "iso" &&
+        (entry.volid === expectedVolid ||
+          String(entry.volid || "").endsWith(`/${sanitizeImportFilename(filename)}`))
+    );
+
+    if (matchedImage) {
+      break;
+    }
+
+    await sleep(1000);
+  }
+
+  if (!matchedImage) {
+    throw new Error(
+      `Upload task completed but the ISO is not present on Proxmox storage '${isoStorage}'.`
+    );
+  }
+
+  return {
+    upid,
+    filename,
+    volid: matchedImage.volid,
   };
 }
 
@@ -2315,6 +2447,7 @@ const server = http.createServer(async (req, res) => {
         result: {
           action: "import-url",
           filename: result.filename,
+          volid: result.volid,
           upid: result.upid,
         },
       });
@@ -2339,9 +2472,10 @@ const server = http.createServer(async (req, res) => {
       const filename = sanitizeImportFilename(
         req.headers["x-upload-filename"] || req.headers["x-filename"] || "upload.iso"
       );
-      const fileBuffer = await readRequestBuffer(req);
+      const streamedUpload = await streamRequestToTempFile(req, filename);
 
-      if (!fileBuffer.length) {
+      if (!streamedUpload.byteLength) {
+        await fs.promises.unlink(streamedUpload.tempPath).catch(() => {});
         json(res, 400, { error: "Uploaded file is empty" });
         return;
       }
@@ -2356,17 +2490,23 @@ const server = http.createServer(async (req, res) => {
         return;
       }
 
-      const result = await uploadBufferToProxmoxIsoAndWait(
-        provider,
-        filename,
-        fileBuffer,
-        req.headers["content-type"] || "application/octet-stream"
-      );
+      let result;
+      try {
+        result = await uploadFileToProxmoxIsoAndWait(
+          provider,
+          filename,
+          streamedUpload.tempPath,
+          req.headers["content-type"] || "application/octet-stream"
+        );
+      } finally {
+        await fs.promises.unlink(streamedUpload.tempPath).catch(() => {});
+      }
 
       json(res, 201, {
         result: {
           action: "upload-file",
           filename: result.filename,
+          volid: result.volid,
           upid: result.upid,
         },
       });
