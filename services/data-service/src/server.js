@@ -45,6 +45,8 @@ function ensureDatabase() {
       ],
       platform: {
         providers: defaultProviders(),
+        events: [],
+        imageProfiles: [],
       },
       sessions: [],
     };
@@ -156,16 +158,40 @@ function sanitizeUser(user) {
 
 function ensurePlatformShape(database) {
   if (!database.platform) {
-    database.platform = { providers: [] };
+    database.platform = { providers: [], events: [], imageProfiles: [] };
   }
 
   if (!Array.isArray(database.platform.providers)) {
     database.platform.providers = [];
   }
 
+  if (!Array.isArray(database.platform.events)) {
+    database.platform.events = [];
+  }
+
+  if (!Array.isArray(database.platform.imageProfiles)) {
+    database.platform.imageProfiles = [];
+  }
+
   if (database.platform.providers.length === 0) {
     database.platform.providers = defaultProviders();
   }
+}
+
+function appendPlatformEvent(database, event) {
+  ensurePlatformShape(database);
+  database.platform.events.unshift({
+    id: crypto.randomUUID(),
+    level: event.level || "info",
+    code: event.code || "platform.event",
+    message: event.message || "",
+    scope: event.scope || "platform",
+    resourceId: event.resourceId || null,
+    resourceType: event.resourceType || null,
+    metadata: event.metadata || null,
+    createdAt: new Date().toISOString(),
+  });
+  database.platform.events = database.platform.events.slice(0, 500);
 }
 
 function sanitizeProvider(provider) {
@@ -285,6 +311,155 @@ const server = http.createServer(async (req, res) => {
     ensurePlatformShape(database);
     json(res, 200, {
       providers: database.platform.providers,
+    });
+    return;
+  }
+
+  if (req.method === "GET" && req.url === "/v1/platform/events") {
+    const database = readDatabase();
+    ensurePlatformShape(database);
+    json(res, 200, {
+      events: database.platform.events.slice(),
+    });
+    return;
+  }
+
+  if (req.method === "GET" && req.url === "/v1/platform/image-profiles") {
+    const database = readDatabase();
+    ensurePlatformShape(database);
+    json(res, 200, {
+      imageProfiles: database.platform.imageProfiles.slice(),
+    });
+    return;
+  }
+
+  if (req.method === "POST" && req.url === "/v1/platform/image-profiles") {
+    const body = await readRequestBody(req);
+    const request = body ? JSON.parse(body) : {};
+    const database = readDatabase();
+    ensurePlatformShape(database);
+
+    if (!String(request.name || "").trim()) {
+      json(res, 400, { error: "name is required" });
+      return;
+    }
+
+    const profile = {
+      id: request.id || crypto.randomUUID(),
+      name: String(request.name).trim(),
+      description: String(request.description || "").trim(),
+      providerId: request.providerId || "proxmox-primary",
+      distributionId: request.distributionId || null,
+      interfaceId: request.interfaceId || null,
+      enabled: request.enabled !== false,
+      installerIsoVolid: request.installerIsoVolid || "",
+      installConfig: {
+        locale: request.installConfig?.locale || "",
+        keyboardLayout: request.installConfig?.keyboardLayout || "",
+        timezone: request.installConfig?.timezone || "",
+        hostname: request.installConfig?.hostname || "",
+      },
+      packages: Array.isArray(request.packages)
+        ? request.packages.map((entry) => String(entry).trim()).filter(Boolean)
+        : [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    database.platform.imageProfiles.push(profile);
+    writeDatabase(database);
+    json(res, 201, { imageProfile: profile });
+    return;
+  }
+
+  if (
+    (req.method === "PATCH" || req.method === "DELETE") &&
+    req.url.startsWith("/v1/platform/image-profiles/")
+  ) {
+    const parts = req.url.split("/").filter(Boolean);
+    const profileId = parts[3];
+    const database = readDatabase();
+    ensurePlatformShape(database);
+    const profileIndex = database.platform.imageProfiles.findIndex(
+      (entry) => entry.id === profileId
+    );
+
+    if (profileIndex === -1) {
+      json(res, 404, { error: "Image profile not found" });
+      return;
+    }
+
+    if (req.method === "DELETE") {
+      const [imageProfile] = database.platform.imageProfiles.splice(profileIndex, 1);
+      writeDatabase(database);
+      json(res, 200, { imageProfile });
+      return;
+    }
+
+    const body = await readRequestBody(req);
+    const request = body ? JSON.parse(body) : {};
+    const profile = database.platform.imageProfiles[profileIndex];
+
+    if (request.name !== undefined) {
+      const name = String(request.name || "").trim();
+      if (!name) {
+        json(res, 400, { error: "name is required" });
+        return;
+      }
+      profile.name = name;
+    }
+
+    if (request.description !== undefined) {
+      profile.description = String(request.description || "").trim();
+    }
+
+    if (request.providerId !== undefined) {
+      profile.providerId = request.providerId || null;
+    }
+
+    if (request.distributionId !== undefined) {
+      profile.distributionId = request.distributionId || null;
+    }
+
+    if (request.interfaceId !== undefined) {
+      profile.interfaceId = request.interfaceId || null;
+    }
+
+    if (request.enabled !== undefined) {
+      profile.enabled = Boolean(request.enabled);
+    }
+
+    if (request.installerIsoVolid !== undefined) {
+      profile.installerIsoVolid = String(request.installerIsoVolid || "");
+    }
+
+    if (request.installConfig && typeof request.installConfig === "object") {
+      profile.installConfig = {
+        ...(profile.installConfig || {}),
+        ...request.installConfig,
+      };
+    }
+
+    if (request.packages !== undefined) {
+      profile.packages = Array.isArray(request.packages)
+        ? request.packages.map((entry) => String(entry).trim()).filter(Boolean)
+        : [];
+    }
+
+    profile.updatedAt = new Date().toISOString();
+    writeDatabase(database);
+    json(res, 200, { imageProfile: profile });
+    return;
+  }
+
+  if (req.method === "POST" && req.url === "/v1/platform/events") {
+    const body = await readRequestBody(req);
+    const request = body ? JSON.parse(body) : {};
+    const database = readDatabase();
+    appendPlatformEvent(database, request);
+    writeDatabase(database);
+    json(res, 201, {
+      event: database.platform.events[0],
     });
     return;
   }
@@ -447,6 +622,7 @@ const server = http.createServer(async (req, res) => {
       instanceSizeId: request.instanceSizeId || null,
       machineTypeId: request.machineTypeId || "container",
       providerId: request.providerId || "docker-local",
+      imageProfileId: request.imageProfileId || null,
       profileId: request.profileId || null,
       state: request.state || "building",
       statusDetail: request.statusDetail || "",
@@ -517,6 +693,10 @@ const server = http.createServer(async (req, res) => {
 
     if (request.providerId !== undefined) {
       session.providerId = request.providerId;
+    }
+
+    if (request.imageProfileId !== undefined) {
+      session.imageProfileId = request.imageProfileId;
     }
 
     if (request.lifecycleCapabilities !== undefined) {

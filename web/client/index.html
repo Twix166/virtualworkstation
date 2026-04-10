@@ -795,6 +795,10 @@
                   Admin Console
                   <small>Open provider configuration and platform administration.</small>
                 </button>
+                <button id="imageManagementButton" class="menu-item hidden" type="button">
+                  Image Management
+                  <small>Manage Proxmox installer images and reusable VM image profiles.</small>
+                </button>
                 <button id="signOutButton" class="menu-item danger-button" type="button">
                   Sign Out
                   <small>End this browser session and return to the login screen.</small>
@@ -828,6 +832,13 @@
                 </select>
               </div>
 
+              <div id="imageProfileField" class="hidden">
+                <label for="imageProfile">Image profile</label>
+                <select id="imageProfile">
+                  <option value="">Default provider image</option>
+                </select>
+              </div>
+
               <div>
                 <label for="distribution">Distribution</label>
                 <select id="distribution">
@@ -847,6 +858,43 @@
                 <select id="instanceSize">
                   <option value="">Loading sizes...</option>
                 </select>
+              </div>
+
+              <div id="installConfigPanel" class="hidden">
+                <div class="card-heading">
+                  <div>
+                    <h3>Install Configuration</h3>
+                    <p>Used for unattended VM installs so locale and keyboard prompts do not block setup.</p>
+                  </div>
+                </div>
+
+                <div class="field-grid">
+                  <div>
+                    <label for="installLocale">Locale</label>
+                    <select id="installLocale">
+                      <option value="">Loading locales...</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label for="installKeyboardLayout">Keyboard layout</label>
+                    <select id="installKeyboardLayout">
+                      <option value="">Loading layouts...</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label for="installTimezone">Timezone</label>
+                    <select id="installTimezone">
+                      <option value="">Loading timezones...</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label for="installHostname">Hostname</label>
+                    <input id="installHostname" placeholder="vm-demo" />
+                  </div>
+                </div>
               </div>
 
               <div class="launch-actions">
@@ -960,9 +1008,16 @@
       const launchButtonEl = document.getElementById("launchButton");
       const machineTypeEl = document.getElementById("machineType");
       const machineProviderEl = document.getElementById("machineProvider");
+      const imageProfileFieldEl = document.getElementById("imageProfileField");
+      const imageProfileEl = document.getElementById("imageProfile");
       const distributionEl = document.getElementById("distribution");
       const desktopEnvironmentEl = document.getElementById("desktopEnvironment");
       const instanceSizeEl = document.getElementById("instanceSize");
+      const installConfigPanelEl = document.getElementById("installConfigPanel");
+      const installLocaleEl = document.getElementById("installLocale");
+      const installKeyboardLayoutEl = document.getElementById("installKeyboardLayout");
+      const installTimezoneEl = document.getElementById("installTimezone");
+      const installHostnameEl = document.getElementById("installHostname");
       const sessionListEl = document.getElementById("sessionList");
       const statusEl = document.getElementById("status");
       const profileTriggerEl = document.getElementById("profileTrigger");
@@ -975,6 +1030,7 @@
       const manageProfileButtonEl = document.getElementById("manageProfileButton");
       const profileSettingsButtonEl = document.getElementById("profileSettingsButton");
       const adminConsoleButtonEl = document.getElementById("adminConsoleButton");
+      const imageManagementButtonEl = document.getElementById("imageManagementButton");
       const signOutButtonEl = document.getElementById("signOutButton");
       const adminToolsEl = document.getElementById("adminTools");
       const adminConsoleCardButtonEl = document.getElementById("adminConsoleCardButton");
@@ -1000,6 +1056,7 @@
       let catalog = {
         machineTypes: [],
         machineProviders: [],
+        imageProfiles: [],
         distributions: [],
         interfaces: [],
         instanceSizes: [],
@@ -1199,6 +1256,10 @@
 
       function findMachineProvider(providerId) {
         return (catalog.machineProviders || []).find((entry) => entry.id === providerId);
+      }
+
+      function findImageProfile(imageProfileId) {
+        return (catalog.imageProfiles || []).find((entry) => entry.id === imageProfileId);
       }
 
       function findInterface(interfaceId) {
@@ -1401,6 +1462,7 @@
           isAdmin() ? "Administrator" : "Workspace user",
         ].join(" • ");
         adminConsoleButtonEl.classList.toggle("hidden", !isAdmin());
+        imageManagementButtonEl.classList.toggle("hidden", !isAdmin());
       }
 
       function renderAdminTools() {
@@ -1560,6 +1622,33 @@
           allowedProviders.find((entry) => entry.default)?.id ||
           allowedProviders[0]?.id ||
           "";
+
+        syncImageProfileVisibility();
+      }
+
+      function populateImageProfileOptions() {
+        const availableProfiles = (catalog.imageProfiles || []).filter((entry) => {
+          if (entry.providerId && entry.providerId !== machineProviderEl.value) {
+            return false;
+          }
+
+          if (entry.distributionId && entry.distributionId !== distributionEl.value) {
+            return false;
+          }
+
+          if (entry.interfaceId && entry.interfaceId !== desktopEnvironmentEl.value) {
+            return false;
+          }
+
+          return entry.enabled !== false;
+        });
+
+        imageProfileEl.innerHTML = [
+          `<option value="">Default provider image</option>`,
+          ...availableProfiles.map(
+            (entry) => `<option value="${entry.id}">${entry.name}</option>`
+          ),
+        ].join("");
       }
 
       function populateInterfaceOptions() {
@@ -1583,6 +1672,9 @@
         )
           ? preferredInterface
           : allowedInterfaces[0]?.id || "";
+
+        populateImageProfileOptions();
+        syncImageProfileVisibility();
       }
 
       function populateInstanceSizeOptions() {
@@ -1598,6 +1690,58 @@
           catalog.instanceSizes.find((entry) => entry.default)?.id ||
           catalog.instanceSizes[0]?.id ||
           "";
+      }
+
+      function shouldShowInstallConfig() {
+        return machineTypeEl.value === "virtual-machine";
+      }
+
+      function shouldShowImageProfile() {
+        return (
+          machineTypeEl.value === "virtual-machine" && machineProviderEl.value === "proxmox-primary"
+        );
+      }
+
+      function syncImageProfileVisibility() {
+        imageProfileFieldEl.classList.toggle("hidden", !shouldShowImageProfile());
+      }
+
+      function populateInstallConfigOptions() {
+        const installOptions = catalog.installOptions || {};
+        const defaultInstallConfig = catalog.policies?.defaultInstallConfig || {};
+
+        installLocaleEl.innerHTML = (installOptions.locales || [])
+          .map((entry) => `<option value="${entry.id}">${entry.name}</option>`)
+          .join("");
+        installKeyboardLayoutEl.innerHTML = (installOptions.keyboardLayouts || [])
+          .map((entry) => `<option value="${entry.id}">${entry.name}</option>`)
+          .join("");
+        installTimezoneEl.innerHTML = (installOptions.timezones || [])
+          .map((entry) => `<option value="${entry.id}">${entry.name}</option>`)
+          .join("");
+
+        installLocaleEl.value =
+          defaultInstallConfig.locale ||
+          (installOptions.locales || []).find((entry) => entry.default)?.id ||
+          installOptions.locales?.[0]?.id ||
+          "";
+        installKeyboardLayoutEl.value =
+          defaultInstallConfig.keyboardLayout ||
+          (installOptions.keyboardLayouts || []).find((entry) => entry.default)?.id ||
+          installOptions.keyboardLayouts?.[0]?.id ||
+          "";
+        installTimezoneEl.value =
+          defaultInstallConfig.timezone ||
+          (installOptions.timezones || []).find((entry) => entry.default)?.id ||
+          installOptions.timezones?.[0]?.id ||
+          "";
+
+        const currentUsername = currentUser?.username || currentIdentity?.username || "demo";
+        installHostnameEl.value = `vw-${currentUsername}`.toLowerCase().replace(/[^a-z0-9-]/g, "-");
+      }
+
+      function syncInstallConfigVisibility() {
+        installConfigPanelEl.classList.toggle("hidden", !shouldShowInstallConfig());
       }
 
       async function loadCatalog() {
@@ -1618,6 +1762,10 @@
         populateDistributionOptions();
         populateInterfaceOptions();
         populateInstanceSizeOptions();
+        populateInstallConfigOptions();
+        syncInstallConfigVisibility();
+        populateImageProfileOptions();
+        syncImageProfileVisibility();
         settingsDefaultInterfaceEl.value =
           currentUser?.profile?.preferences?.defaultDesktopEnvironment || "xfce";
         launchButtonEl.disabled = !token;
@@ -1824,9 +1972,16 @@
           body: JSON.stringify({
             machineTypeId: machineTypeEl.value,
             providerId: machineProviderEl.value,
+            imageProfileId: imageProfileEl.value,
             distributionId: distributionEl.value,
             interfaceId: desktopEnvironmentEl.value,
             instanceSizeId: instanceSizeEl.value,
+            installConfig: {
+              locale: installLocaleEl.value,
+              keyboardLayout: installKeyboardLayoutEl.value,
+              timezone: installTimezoneEl.value,
+              hostname: installHostnameEl.value,
+            },
           }),
         });
         const payload = await response.json();
@@ -1969,9 +2124,18 @@
       });
       machineTypeEl.addEventListener("change", () => {
         populateProviderOptions();
+        syncInstallConfigVisibility();
+      });
+      machineProviderEl.addEventListener("change", () => {
+        populateImageProfileOptions();
+        syncImageProfileVisibility();
       });
       distributionEl.addEventListener("change", () => {
         populateInterfaceOptions();
+      });
+      desktopEnvironmentEl.addEventListener("change", () => {
+        populateImageProfileOptions();
+        syncImageProfileVisibility();
       });
       profileTriggerEl.addEventListener("click", () => {
         toggleProfileMenu();
@@ -1984,6 +2148,9 @@
       });
       adminConsoleButtonEl.addEventListener("click", () => {
         window.location.href = "/admin";
+      });
+      imageManagementButtonEl.addEventListener("click", () => {
+        window.location.href = "/images";
       });
       signOutButtonEl.addEventListener("click", () => {
         signOut();

@@ -1,5 +1,5 @@
 {
-  "version": 4,
+  "version": 5,
   "machineTypes": [
     {
       "id": "container",
@@ -200,10 +200,62 @@
       }
     }
   ],
+  "installOptions": {
+    "locales": [
+      {
+        "id": "en_GB.UTF-8",
+        "name": "English (United Kingdom)",
+        "default": true
+      },
+      {
+        "id": "en_US.UTF-8",
+        "name": "English (United States)"
+      },
+      {
+        "id": "de_DE.UTF-8",
+        "name": "German"
+      }
+    ],
+    "keyboardLayouts": [
+      {
+        "id": "gb",
+        "name": "United Kingdom",
+        "default": true
+      },
+      {
+        "id": "us",
+        "name": "United States"
+      },
+      {
+        "id": "de",
+        "name": "German"
+      }
+    ],
+    "timezones": [
+      {
+        "id": "Europe/London",
+        "name": "Europe/London",
+        "default": true
+      },
+      {
+        "id": "Europe/Berlin",
+        "name": "Europe/Berlin"
+      },
+      {
+        "id": "America/New_York",
+        "name": "America/New_York"
+      }
+    ]
+  },
   "policies": {
     "defaultMachineTypeId": "container",
     "defaultDistributionId": "xubuntu-24.04",
     "defaultInterfaceId": "xfce",
-    "defaultInstanceSizeId": "small"
+    "defaultInstanceSizeId": "small",
+    "defaultInstallConfig": {
+      "locale": "en_GB.UTF-8",
+      "keyboardLayout": "gb",
+      "timezone": "Europe/London"
+    }
   }
 }

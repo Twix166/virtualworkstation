@@ -3,6 +3,7 @@
 Declarative Docker-based scaffold for a microservices virtual workstation platform. The stack now provides:
 
 - A web frontend where users can sign in, register, and launch browser-based Linux sessions
+- A dedicated Image Management page for Proxmox installer ISOs and reusable VM image profiles
 - An API gateway that serves the frontend and brokers service calls
 - An auth service that issues signed bearer tokens for persisted accounts
 - A data service that persists users, profiles, and workstation session records
@@ -16,6 +17,7 @@ Declarative Docker-based scaffold for a microservices virtual workstation platfo
 ### Services
 
 - `web/client`: Browser UI for login and session launch
+- `web/client/images`: Browser UI for Proxmox ISO inventory and VM image profiles
 - `services/api-gateway`: Entry point for browser traffic and service fan-out
 - `services/auth-service`: User authentication and token issuance
 - `services/data-service`: User/profile/session persistence
@@ -70,6 +72,8 @@ The installer:
 Then open:
 
 - `http://localhost:${API_GATEWAY_PORT}` for the control plane UI
+- `http://localhost:${API_GATEWAY_PORT}/images` for image management
+- `http://localhost:${API_GATEWAY_PORT}/admin` for the admin console
 
 If `8080` is already in use on your machine, change `API_GATEWAY_PORT` in `.env` before starting the stack.
 
@@ -93,6 +97,28 @@ The first launch of a distro/interface combination may take longer because the w
 - Each launched workstation is persisted as a user-owned session record.
 - Each launch creates a fresh Docker container with its own published browser endpoint.
 - The resolved runtime spec records which distro/interface image was actually used.
+- Proxmox-backed provider settings and reusable image profiles are persisted separately from session history.
+
+## Current Admin UX
+
+- The main application handles sign-in, launch, and user session management.
+- The admin console at `/admin` is used for provider configuration, cleanup, and platform operations.
+- The image management screen at `/images` is used to:
+  - review Proxmox ISO inventory
+  - upload local ISOs
+  - import ISOs from remote URLs
+  - delete ISOs from configured Proxmox storage
+  - define reusable unattended-install image profiles for VM launches
+
+## Current VM / Proxmox Flow
+
+- Proxmox providers can be configured from the admin console.
+- The session launcher supports both container-backed sessions and Proxmox VM-backed sessions.
+- VM launches support install-time configuration for locale, keyboard layout, timezone, and hostname.
+- Image profiles can be selected during VM launch to apply ISO choice, unattended install defaults, and extra packages.
+- ISO uploads now stream through the control plane instead of buffering fully in memory before Proxmox transfer.
+- Successful ISO uploads are reported complete only after the ISO is confirmed in Proxmox storage.
+- Newly uploaded ISOs are marked as `New` in the image inventory for 24 hours.
 
 ## Backlog
 
@@ -128,9 +154,10 @@ The provider/plugin model is defined in [docs/provider-plugin-design.md](/home/r
 Current state:
 
 - Docker-backed container providers are implemented
-- Proxmox VM providers are configurable from the admin console and now have a first adapter in `workspace-service`
+- Proxmox VM providers are configurable from the admin console and now have a working first adapter in `workspace-service`
 - Local KVM/libvirt providers are configurable from the admin console
-- Proxmox still needs environment-specific configuration and a richer console handoff path
+- Proxmox now supports ISO-backed unattended VM provisioning, console access, and ISO lifecycle operations from the Image Management page
+- Proxmox still needs environment-specific tuning and further polish around long-running upload/install UX
 - Local libvirt provisioning is not yet implemented
 
 ## Notes
