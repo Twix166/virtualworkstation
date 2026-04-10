@@ -164,6 +164,7 @@ Current state:
 
 - Control-plane services use only Node.js built-ins to keep the baseline easy to inspect.
 - Authentication is deliberately minimal and not production-safe.
+- Current release notes: [v0.4.0](/home/rbalm/code/virtualworkstation/docs/releases/v0.4.0.md)
 
 ## License
 
