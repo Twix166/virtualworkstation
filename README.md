@@ -138,7 +138,7 @@ The first launch of a distro/interface combination may take longer because the w
 
 ## Runtime Catalog
 
-The backlog above is now translated into a concrete catalog and runtime model in [docs/runtime-catalog-design.md](/home/rbalm/code/virtualworkstation/docs/runtime-catalog-design.md).
+The backlog above is now translated into a concrete catalog and runtime model in [docs/runtime-catalog-design.md](docs/runtime-catalog-design.md).
 
 That design defines:
 
@@ -149,7 +149,7 @@ That design defines:
 
 ## Provider Plugins
 
-The provider/plugin model is defined in [docs/provider-plugin-design.md](/home/rbalm/code/virtualworkstation/docs/provider-plugin-design.md).
+The provider/plugin model is defined in [docs/provider-plugin-design.md](docs/provider-plugin-design.md).
 
 Current state:
 
@@ -164,7 +164,7 @@ Current state:
 
 - Control-plane services use only Node.js built-ins to keep the baseline easy to inspect.
 - Authentication is deliberately minimal and not production-safe.
-- Current release notes: [v0.4.0](/home/rbalm/code/virtualworkstation/docs/releases/v0.4.0.md)
+- Current release notes: [v0.4.0](docs/releases/v0.4.0.md)
 
 ## License
 
