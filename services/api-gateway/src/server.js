@@ -725,6 +725,35 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (
+    req.method === "DELETE" &&
+    req.url.startsWith("/api/admin/proxmox/images/")
+  ) {
+    const payload = decodeBearerPayload(req.headers.authorization || "");
+
+    if (!isAdminPayload(payload)) {
+      json(res, 403, { error: "Admin access required" });
+      return;
+    }
+
+    try {
+      const response = await forwardJson(
+        workspaceServiceUrl,
+        req.url.replace("/api", "/v1"),
+        "DELETE",
+        "",
+        { Authorization: req.headers.authorization || "" }
+      );
+      json(res, response.statusCode, response.payload);
+    } catch (error) {
+      json(res, 502, {
+        error: "Workspace service unavailable",
+        detail: error.message,
+      });
+    }
+    return;
+  }
+
+  if (
     req.method === "POST" &&
     req.url.startsWith("/api/workspaces/") &&
     req.url.endsWith("/stop")

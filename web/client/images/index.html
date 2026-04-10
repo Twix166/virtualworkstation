@@ -93,6 +93,27 @@
         white-space: pre-wrap;
         font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
       }
+      .progress-shell {
+        display: grid;
+        gap: 8px;
+        margin: 14px 0 0;
+        padding: 12px 14px;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        background: #f9fbfc;
+      }
+      .progress-shell.hidden { display: none !important; }
+      .progress-meta {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        font-size: 13px;
+        color: var(--muted);
+      }
+      progress {
+        width: 100%;
+        height: 12px;
+      }
       .auth-warning {
         max-width: 640px;
         margin: 12vh auto 0;
@@ -160,6 +181,13 @@
               <div class="field" style="align-self:end;">
                 <button id="uploadIsoButton" class="secondary" type="button">Upload File to Proxmox</button>
               </div>
+            </div>
+            <div id="isoUploadProgress" class="progress-shell hidden">
+              <div class="progress-meta">
+                <strong id="isoUploadProgressLabel">Preparing upload...</strong>
+                <span id="isoUploadProgressValue">0%</span>
+              </div>
+              <progress id="isoUploadProgressBar" max="100" value="0"></progress>
             </div>
             <div id="isoList" class="iso-list"></div>
           </article>
@@ -268,6 +296,10 @@
       const isoUploadFileEl = document.getElementById("isoUploadFile");
       const downloadIsoButtonEl = document.getElementById("downloadIsoButton");
       const uploadIsoButtonEl = document.getElementById("uploadIsoButton");
+      const isoUploadProgressEl = document.getElementById("isoUploadProgress");
+      const isoUploadProgressLabelEl = document.getElementById("isoUploadProgressLabel");
+      const isoUploadProgressValueEl = document.getElementById("isoUploadProgressValue");
+      const isoUploadProgressBarEl = document.getElementById("isoUploadProgressBar");
       const profileListEl = document.getElementById("profileList");
       const editorHeadingEl = document.getElementById("editorHeading");
       const statusBoxEl = document.getElementById("statusBox");
@@ -292,6 +324,7 @@
       let proxmoxImages = [];
       let imageProfiles = [];
       let editingProfileId = null;
+      let isoActionInFlight = false;
 
       function decodeTokenPayload(tokenValue) {
         if (!tokenValue) return null;
@@ -315,6 +348,31 @@
 
       function setStatus(value) {
         statusBoxEl.textContent = value;
+      }
+
+      function setIsoActionBusy(isBusy) {
+        isoActionInFlight = isBusy;
+        downloadIsoButtonEl.disabled = isBusy;
+        uploadIsoButtonEl.disabled = isBusy;
+        reloadButtonEl.disabled = isBusy;
+      }
+
+      function showUploadProgress(label, percent, indeterminate = false) {
+        isoUploadProgressEl.classList.remove("hidden");
+        isoUploadProgressLabelEl.textContent = label;
+        isoUploadProgressBarEl.removeAttribute("value");
+        isoUploadProgressValueEl.textContent = indeterminate ? "Working..." : `${percent}%`;
+
+        if (!indeterminate) {
+          isoUploadProgressBarEl.value = Math.max(0, Math.min(100, percent));
+        }
+      }
+
+      function hideUploadProgress() {
+        isoUploadProgressEl.classList.add("hidden");
+        isoUploadProgressLabelEl.textContent = "Preparing upload...";
+        isoUploadProgressValueEl.textContent = "0%";
+        isoUploadProgressBarEl.value = 0;
       }
 
       function loadStoredAuthState() {
@@ -370,11 +428,23 @@
                       Storage: ${entry.storage || "n/a"}<br />
                       Size: ${entry.size || "n/a"}
                     </div>
+                    <div class="inline-actions">
+                      <button class="danger" data-delete-iso="${entry.volid}" type="button">Delete ISO</button>
+                    </div>
                   </div>
                 `
               )
               .join("")
           : '<div class="iso-card"><strong>No Proxmox ISO images found.</strong><div class="meta">Check the configured Proxmox provider and ISO storage.</div></div>';
+
+        for (const button of isoListEl.querySelectorAll("[data-delete-iso]")) {
+          button.addEventListener("click", async () => {
+            const volid = button.dataset.deleteIso;
+            if (!volid || isoActionInFlight) return;
+            if (!window.confirm(`Delete ISO ${volid} from Proxmox storage?`)) return;
+            await deleteIso(volid);
+          });
+        }
       }
 
       function renderProfiles() {
@@ -475,34 +545,43 @@
       }
 
       async function importIsoFromUrl() {
+        if (isoActionInFlight) return;
+        setIsoActionBusy(true);
+        showUploadProgress("Downloading remote ISO and importing into Proxmox...", 10, true);
         setStatus("Requesting Proxmox ISO download...");
-        const response = await fetch("/api/admin/proxmox/images/import-url", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({
-            url: isoSourceUrlEl.value,
-            filename: isoSourceFilenameEl.value,
-          }),
-        });
-        const payload = await response.json();
+        try {
+          const response = await fetch("/api/admin/proxmox/images/import-url", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({
+              url: isoSourceUrlEl.value,
+              filename: isoSourceFilenameEl.value,
+            }),
+          });
+          const payload = await response.json();
 
-        if (!response.ok) {
-          setStatus(payload.detail || payload.error || "Unable to download ISO to Proxmox.");
-          return;
+          if (!response.ok) {
+            setStatus(payload.detail || payload.error || "Unable to download ISO to Proxmox.");
+            return;
+          }
+
+          showUploadProgress("Refreshing Proxmox ISO inventory...", 100);
+          await loadProxmoxImages();
+          setStatus(
+            `Proxmox ISO import completed.\nFilename: ${payload.result?.filename || "n/a"}\nTask: ${
+              payload.result?.upid || "n/a"
+            }`
+          );
+        } finally {
+          setIsoActionBusy(false);
+          window.setTimeout(hideUploadProgress, 700);
         }
-
-        setStatus(
-          `Proxmox ISO download queued.\nFilename: ${payload.result?.filename || "n/a"}\nTask: ${
-            payload.result?.upid || "n/a"
-          }`
-        );
-        await loadProxmoxImages();
       }
 
-      async function uploadIsoFile() {
+      function uploadIsoFile() {
         const file = isoUploadFileEl.files?.[0];
 
         if (!file) {
@@ -510,30 +589,93 @@
           return;
         }
 
+        if (isoActionInFlight) return;
+        setIsoActionBusy(true);
         setStatus(`Uploading ${file.name} to Proxmox ISO storage...`);
-        const response = await fetch("/api/admin/proxmox/images/upload", {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${token}`,
-            "Content-Type": file.type || "application/octet-stream",
-            "X-Upload-Filename": file.name,
-          },
-          body: file,
-        });
-        const payload = await response.json();
+        showUploadProgress(`Uploading ${file.name} to the platform...`, 0);
 
-        if (!response.ok) {
-          setStatus(payload.detail || payload.error || "Unable to upload ISO to Proxmox.");
-          return;
+        const request = new XMLHttpRequest();
+        request.open("POST", "/api/admin/proxmox/images/upload");
+        request.responseType = "json";
+        request.setRequestHeader("Authorization", `Bearer ${token}`);
+        request.setRequestHeader("Content-Type", file.type || "application/octet-stream");
+        request.setRequestHeader("X-Upload-Filename", file.name);
+
+        request.upload.onprogress = (event) => {
+          if (!event.lengthComputable) {
+            showUploadProgress(`Uploading ${file.name} to the platform...`, 0, true);
+            return;
+          }
+
+          const percent = Math.round((event.loaded / event.total) * 100);
+          showUploadProgress(`Uploading ${file.name} to the platform...`, percent);
+        };
+
+        request.onload = async () => {
+          const payload = request.response || JSON.parse(request.responseText || "{}");
+
+          if (request.status < 200 || request.status >= 300) {
+            setStatus(payload.detail || payload.error || "Unable to upload ISO to Proxmox.");
+            setIsoActionBusy(false);
+            window.setTimeout(hideUploadProgress, 700);
+            return;
+          }
+
+          showUploadProgress("Finalizing upload on Proxmox and refreshing inventory...", 100, true);
+
+          try {
+            isoUploadFileEl.value = "";
+            await loadProxmoxImages();
+            setStatus(
+              `Proxmox ISO upload completed.\nFilename: ${payload.result?.filename || file.name}\nTask: ${
+                payload.result?.upid || "n/a"
+              }`
+            );
+          } finally {
+            setIsoActionBusy(false);
+            window.setTimeout(hideUploadProgress, 700);
+          }
+        };
+
+        request.onerror = () => {
+          setStatus("Unable to upload ISO to Proxmox.");
+          setIsoActionBusy(false);
+          window.setTimeout(hideUploadProgress, 700);
+        };
+
+        request.send(file);
+      }
+
+      async function deleteIso(volid) {
+        setIsoActionBusy(true);
+        showUploadProgress(`Deleting ${volid} from Proxmox storage...`, 10, true);
+        setStatus(`Deleting ${volid} from Proxmox ISO storage...`);
+
+        try {
+          const response = await fetch(`/api/admin/proxmox/images/${encodeURIComponent(volid)}`, {
+            method: "DELETE",
+            headers: {
+              Authorization: `Bearer ${token}`,
+            },
+          });
+          const payload = await response.json();
+
+          if (!response.ok) {
+            setStatus(payload.detail || payload.error || "Unable to delete ISO from Proxmox.");
+            return;
+          }
+
+          showUploadProgress("Refreshing Proxmox ISO inventory...", 100);
+          await loadProxmoxImages();
+          setStatus(
+            `Proxmox ISO removed.\nVolume: ${payload.result?.volid || volid}\nTask: ${
+              payload.result?.upid || "n/a"
+            }`
+          );
+        } finally {
+          setIsoActionBusy(false);
+          window.setTimeout(hideUploadProgress, 700);
         }
-
-        setStatus(
-          `Proxmox ISO upload queued.\nFilename: ${payload.result?.filename || file.name}\nTask: ${
-            payload.result?.upid || "n/a"
-          }`
-        );
-        isoUploadFileEl.value = "";
-        await loadProxmoxImages();
       }
 
       async function loadImageProfiles() {

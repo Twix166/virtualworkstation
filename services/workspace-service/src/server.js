@@ -566,6 +566,60 @@ async function uploadBufferToProxmoxIso(provider, filename, fileBuffer, contentT
   });
 }
 
+async function uploadBufferToProxmoxIsoAndWait(
+  provider,
+  filename,
+  fileBuffer,
+  contentType = "application/octet-stream"
+) {
+  const node = getProviderConfigValue(provider, "node");
+
+  if (!node) {
+    throw new Error("Proxmox provider is missing node");
+  }
+
+  const upid = await uploadBufferToProxmoxIso(provider, filename, fileBuffer, contentType);
+  await waitForProxmoxTask(provider, node, upid);
+
+  return {
+    upid,
+    filename,
+  };
+}
+
+async function deleteProxmoxIsoAndWait(provider, volid) {
+  const node = getProviderConfigValue(provider, "node");
+  const isoStorage = getProviderConfigValue(provider, "isoStorage") || "local";
+  const normalizedVolid = String(volid || "").trim();
+
+  if (!node) {
+    throw new Error("Proxmox provider is missing node");
+  }
+
+  if (!normalizedVolid) {
+    throw new Error("volid is required");
+  }
+
+  const storagePrefix = `${isoStorage}:`;
+  if (!normalizedVolid.startsWith(storagePrefix)) {
+    throw new Error(`ISO volume must be on Proxmox storage '${isoStorage}'`);
+  }
+
+  const deleteTask = await proxmoxRequest(
+    provider,
+    `/api2/json/nodes/${encodeURIComponent(node)}/storage/${encodeURIComponent(
+      isoStorage
+    )}/content/${encodeURIComponent(normalizedVolid)}`,
+    { method: "DELETE" }
+  );
+  await waitForProxmoxTask(provider, node, deleteTask);
+
+  return {
+    upid: deleteTask,
+    volid: normalizedVolid,
+  };
+}
+
 function sanitizeProviderRecord(provider) {
   if (!provider) {
     return null;
@@ -2255,13 +2309,13 @@ const server = http.createServer(async (req, res) => {
         request.filename || path.basename(parsedUrl.pathname) || "image.iso"
       );
       const fileBuffer = await fetchRemoteFileBuffer(sourceUrl);
-      const task = await uploadBufferToProxmoxIso(provider, filename, fileBuffer);
+      const result = await uploadBufferToProxmoxIsoAndWait(provider, filename, fileBuffer);
 
-      json(res, 202, {
+      json(res, 201, {
         result: {
           action: "import-url",
-          filename,
-          upid: task,
+          filename: result.filename,
+          upid: result.upid,
         },
       });
     } catch (error) {
@@ -2302,23 +2356,67 @@ const server = http.createServer(async (req, res) => {
         return;
       }
 
-      const task = await uploadBufferToProxmoxIso(
+      const result = await uploadBufferToProxmoxIsoAndWait(
         provider,
         filename,
         fileBuffer,
         req.headers["content-type"] || "application/octet-stream"
       );
 
-      json(res, 202, {
+      json(res, 201, {
         result: {
           action: "upload-file",
-          filename,
-          upid: task,
+          filename: result.filename,
+          upid: result.upid,
         },
       });
     } catch (error) {
       json(res, 502, {
         error: "Unable to upload Proxmox ISO",
+        detail: error.message,
+      });
+    }
+    return;
+  }
+
+  if (req.method === "DELETE" && pathname.startsWith("/v1/admin/proxmox/images/")) {
+    const identity = verifyToken(req.headers.authorization || "");
+
+    if (!isAdminIdentity(identity)) {
+      json(res, 403, { error: "Admin access required" });
+      return;
+    }
+
+    try {
+      const volid = decodeURIComponent(pathname.slice("/v1/admin/proxmox/images/".length));
+
+      if (!volid) {
+        json(res, 400, { error: "volid is required" });
+        return;
+      }
+
+      const providers = await listProviders();
+      const provider = providers.find(
+        (entry) => entry.id === "proxmox-primary" || entry.driver === "proxmox"
+      );
+
+      if (!provider || provider.enabled !== true) {
+        json(res, 400, { error: "Enabled Proxmox provider not found" });
+        return;
+      }
+
+      const result = await deleteProxmoxIsoAndWait(provider, volid);
+
+      json(res, 200, {
+        result: {
+          action: "delete-file",
+          volid: result.volid,
+          upid: result.upid,
+        },
+      });
+    } catch (error) {
+      json(res, 502, {
+        error: "Unable to delete Proxmox ISO",
         detail: error.message,
       });
     }
