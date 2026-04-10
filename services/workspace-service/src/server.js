@@ -38,6 +38,17 @@ function readRequestBody(req) {
   });
 }
 
+function readRequestBuffer(req) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    req.on("data", (chunk) => {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    });
+    req.on("end", () => resolve(Buffer.concat(chunks)));
+    req.on("error", reject);
+  });
+}
+
 function loadCatalog() {
   return JSON.parse(fs.readFileSync(workspaceCatalogPath, "utf8"));
 }
@@ -348,6 +359,16 @@ function resolveInstallConfig(catalog, request, identity) {
   };
 }
 
+function mergeInstallConfig(baseConfig, overrideConfig) {
+  return {
+    locale: overrideConfig?.locale || baseConfig?.locale || "",
+    keyboardLayout:
+      overrideConfig?.keyboardLayout || baseConfig?.keyboardLayout || "",
+    timezone: overrideConfig?.timezone || baseConfig?.timezone || "",
+    hostname: overrideConfig?.hostname || baseConfig?.hostname || "",
+  };
+}
+
 function buildRuntimeSpec(selection, installConfig = null) {
   return {
     profileId: selection.runtimeProfile.id,
@@ -388,6 +409,11 @@ function defaultMachineTypes() {
 async function listProviders() {
   const response = await forwardJson("/v1/platform/providers/internal", "GET");
   return response.payload.providers || [];
+}
+
+async function listImageProfiles() {
+  const response = await forwardJson("/v1/platform/image-profiles", "GET");
+  return response.payload.imageProfiles || [];
 }
 
 async function getProviderRecordForSession(session) {
@@ -432,6 +458,112 @@ function getProviderBoolean(provider, key, fallback = false) {
   }
 
   return Boolean(value);
+}
+
+function sanitizeImportFilename(filename, fallback = "image.iso") {
+  const safe = path.basename(String(filename || "").trim()).replace(/[^a-zA-Z0-9._-]/g, "-");
+  return safe || fallback;
+}
+
+async function fetchRemoteFileBuffer(url) {
+  const response = await fetch(url);
+
+  if (!response.ok) {
+    throw new Error(`Unable to download remote file: ${response.status} ${response.statusText}`);
+  }
+
+  const arrayBuffer = await response.arrayBuffer();
+  return Buffer.from(arrayBuffer);
+}
+
+async function uploadBufferToProxmoxIso(provider, filename, fileBuffer, contentType = "application/octet-stream") {
+  const node = getProviderConfigValue(provider, "node");
+  const isoStorage = getProviderConfigValue(provider, "isoStorage") || "local";
+
+  if (!node) {
+    throw new Error("Proxmox provider is missing node");
+  }
+
+  const boundary = `----vw-${crypto.randomUUID()}`;
+  const parts = [];
+  const push = (value) => {
+    parts.push(Buffer.isBuffer(value) ? value : Buffer.from(value));
+  };
+
+  push(`--${boundary}\r\n`);
+  push(`Content-Disposition: form-data; name="content"\r\n\r\n`);
+  push(`iso\r\n`);
+  push(`--${boundary}\r\n`);
+  push(
+    `Content-Disposition: form-data; name="filename"; filename="${sanitizeImportFilename(
+      filename
+    )}"\r\n`
+  );
+  push(`Content-Type: ${contentType || "application/octet-stream"}\r\n\r\n`);
+  push(fileBuffer);
+  push(`\r\n--${boundary}--\r\n`);
+  const payload = Buffer.concat(parts);
+
+  const apiUrl = getProviderConfigValue(provider, "apiUrl");
+  if (!apiUrl) {
+    throw new Error("Proxmox provider is missing apiUrl");
+  }
+
+  const target = new URL(
+    `/api2/json/nodes/${encodeURIComponent(node)}/storage/${encodeURIComponent(
+      isoStorage
+    )}/upload`,
+    apiUrl
+  );
+
+  return new Promise((resolve, reject) => {
+    const request = https.request(
+      target,
+      {
+        method: "POST",
+        headers: {
+          Authorization: buildProxmoxAuthorizationHeader(provider),
+          "Content-Type": `multipart/form-data; boundary=${boundary}`,
+          "Content-Length": String(payload.length),
+        },
+        rejectUnauthorized: provider?.config?.validateTls !== false,
+      },
+      (response) => {
+        let responseBody = "";
+        response.on("data", (chunk) => {
+          responseBody += chunk;
+        });
+        response.on("end", () => {
+          let parsed = {};
+          if (responseBody) {
+            try {
+              parsed = JSON.parse(responseBody);
+            } catch (error) {
+              reject(error);
+              return;
+            }
+          }
+
+          if ((response.statusCode || 500) >= 400) {
+            reject(
+              new Error(
+                parsed.errors
+                  ? JSON.stringify(parsed.errors)
+                  : parsed.message || parsed.error || responseBody || `Proxmox upload failed with ${response.statusCode}`
+              )
+            );
+            return;
+          }
+
+          resolve(parsed.data);
+        });
+      }
+    );
+
+    request.on("error", reject);
+    request.write(payload);
+    request.end();
+  });
 }
 
 function sanitizeProviderRecord(provider) {
@@ -553,10 +685,15 @@ async function listProxmoxStorageContent(provider, node, storage) {
 async function resolveProxmoxInstallerIsoVolid(provider, runtimeSpec) {
   const node = getProviderConfigValue(provider, "node");
   const isoStorage = getProviderConfigValue(provider, "isoStorage") || "local";
+  const imageProfileVolid = runtimeSpec?.imageProfile?.installerIsoVolid;
   const configuredVolid = getProviderConfigValue(provider, "installerIsoVolid");
 
   if (!node) {
     throw new Error("Proxmox provider is missing node");
+  }
+
+  if (imageProfileVolid) {
+    return imageProfileVolid;
   }
 
   if (configuredVolid) {
@@ -627,6 +764,10 @@ function buildAutoinstallUserData(sessionId, runtimeSpec, provider) {
       : runtimeSpec.interfaceId === "gnome"
         ? "ubuntu-desktop"
         : "ubuntu-desktop";
+  const extraPackages = Array.isArray(runtimeSpec?.imageProfile?.packages)
+    ? runtimeSpec.imageProfile.packages
+    : [];
+  const packageList = ["qemu-guest-agent", "sudo", xubuntuTarget, ...extraPackages];
 
   return `#cloud-config
 autoinstall:
@@ -647,9 +788,7 @@ autoinstall:
   apt:
     preserve_sources_list: false
   packages:
-    - qemu-guest-agent
-    - sudo
-    - ${xubuntuTarget}
+${packageList.map((entry) => `    - ${entry}`).join("\n")}
   user-data:
     hostname: ${hostname}
     disable_root: false
@@ -1487,6 +1626,24 @@ async function deleteSessionRecord(sessionId) {
   return forwardJson(`/v1/sessions/${sessionId}`, "DELETE");
 }
 
+async function createPlatformEvent(event) {
+  try {
+    await forwardJson("/v1/platform/events", "POST", JSON.stringify(event));
+  } catch (error) {
+    console.error("failed to persist platform event", error.message);
+  }
+}
+
+function isMissingProxmoxVmError(error) {
+  const message = String(error?.message || "");
+  return (
+    message.includes("unable to find configuration file for VM") ||
+    message.includes("Configuration file 'nodes/") ||
+    message.includes("VM  does not exist") ||
+    message.includes("no such VM")
+  );
+}
+
 async function removeRuntimeContainer(containerIdOrName) {
   if (!containerIdOrName) {
     return false;
@@ -1577,12 +1734,27 @@ async function stopProxmoxVirtualMachine(session) {
     return;
   }
 
-  const task = await proxmoxRequest(
-    provider,
-    `/api2/json/nodes/${encodeURIComponent(resource.node)}/qemu/${encodeURIComponent(resource.vmid)}/status/stop`,
-    { method: "POST" }
-  );
-  await waitForProxmoxTask(provider, resource.node, task);
+  let task;
+  try {
+    task = await proxmoxRequest(
+      provider,
+      `/api2/json/nodes/${encodeURIComponent(resource.node)}/qemu/${encodeURIComponent(resource.vmid)}/status/stop`,
+      { method: "POST" }
+    );
+  } catch (error) {
+    if (isMissingProxmoxVmError(error)) {
+      return;
+    }
+    throw error;
+  }
+  try {
+    await waitForProxmoxTask(provider, resource.node, task);
+  } catch (error) {
+    if (isMissingProxmoxVmError(error)) {
+      return;
+    }
+    throw error;
+  }
 }
 
 async function deleteProxmoxVirtualMachine(session) {
@@ -1601,16 +1773,46 @@ async function deleteProxmoxVirtualMachine(session) {
     }
   }
 
-  const task = await proxmoxRequest(
-    provider,
-    `/api2/json/nodes/${encodeURIComponent(resource.node)}/qemu/${encodeURIComponent(
-      resource.vmid
-    )}?purge=1&destroy-unreferenced-disks=1`,
-    {
-      method: "DELETE",
+  let task;
+  try {
+    task = await proxmoxRequest(
+      provider,
+      `/api2/json/nodes/${encodeURIComponent(resource.node)}/qemu/${encodeURIComponent(
+        resource.vmid
+      )}?purge=1&destroy-unreferenced-disks=1`,
+      {
+        method: "DELETE",
+      }
+    );
+  } catch (error) {
+    if (!isMissingProxmoxVmError(error)) {
+      throw error;
     }
-  );
-  await waitForProxmoxTask(provider, resource.node, task);
+
+    await createPlatformEvent({
+      level: "warning",
+      code: "proxmox.vm.missing_on_delete",
+      message: `Proxmox VM ${resource.vmid} was already missing during session removal.`,
+      scope: "session",
+      resourceType: "session",
+      resourceId: session.id,
+      metadata: {
+        providerId: session.providerId,
+        node: resource.node,
+        vmid: resource.vmid,
+        vmName: resource.name || null,
+      },
+    });
+
+    console.warn(
+      `Proxmox VM ${resource.vmid} for session ${session.id} was already missing; removing stale session record`
+    );
+    return;
+  }
+
+  if (task) {
+    await waitForProxmoxTask(provider, resource.node, task);
+  }
 }
 
 async function stopRuntimeResource(session) {
@@ -1957,6 +2159,7 @@ const server = http.createServer(async (req, res) => {
     try {
       const catalog = loadCatalog();
       const providers = await listProviders();
+      const imageProfiles = await listImageProfiles();
       json(res, 200, {
         version: catalog.version || 1,
         machineTypes: catalog.machineTypes || defaultMachineTypes(),
@@ -1967,6 +2170,7 @@ const server = http.createServer(async (req, res) => {
         interfaces: catalog.interfaces || [],
         instanceSizes: catalog.instanceSizes || [],
         installOptions: catalog.installOptions || {},
+        imageProfiles: imageProfiles.filter((entry) => entry.enabled !== false),
         runtimeProfiles: catalog.runtimeProfiles || [],
         policies: {
           defaultMachineTypeId:
@@ -1977,6 +2181,144 @@ const server = http.createServer(async (req, res) => {
     } catch (error) {
       json(res, 502, {
         error: "Unable to load workspace catalog",
+        detail: error.message,
+      });
+    }
+    return;
+  }
+
+  if (req.method === "GET" && pathname === "/v1/admin/proxmox/images") {
+    const identity = verifyToken(req.headers.authorization || "");
+
+    if (!isAdminIdentity(identity)) {
+      json(res, 403, { error: "Admin access required" });
+      return;
+    }
+
+    try {
+      const providers = await listProviders();
+      const provider = providers.find(
+        (entry) => entry.id === "proxmox-primary" || entry.driver === "proxmox"
+      );
+
+      if (!provider || provider.enabled !== true) {
+        json(res, 200, { images: [] });
+        return;
+      }
+
+      const node = getProviderConfigValue(provider, "node");
+      const isoStorage = getProviderConfigValue(provider, "isoStorage") || "local";
+      const images = await listProxmoxStorageContent(provider, node, isoStorage);
+
+      json(res, 200, {
+        images: images.filter((entry) => entry.content === "iso"),
+      });
+    } catch (error) {
+      json(res, 502, {
+        error: "Unable to load Proxmox images",
+        detail: error.message,
+      });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && pathname === "/v1/admin/proxmox/images/import-url") {
+    const identity = verifyToken(req.headers.authorization || "");
+
+    if (!isAdminIdentity(identity)) {
+      json(res, 403, { error: "Admin access required" });
+      return;
+    }
+
+    try {
+      const body = await readRequestBody(req);
+      const request = body ? JSON.parse(body) : {};
+      const sourceUrl = String(request.url || "").trim();
+
+      if (!sourceUrl) {
+        json(res, 400, { error: "url is required" });
+        return;
+      }
+
+      const providers = await listProviders();
+      const provider = providers.find(
+        (entry) => entry.id === "proxmox-primary" || entry.driver === "proxmox"
+      );
+
+      if (!provider || provider.enabled !== true) {
+        json(res, 400, { error: "Enabled Proxmox provider not found" });
+        return;
+      }
+
+      const parsedUrl = new URL(sourceUrl);
+      const filename = sanitizeImportFilename(
+        request.filename || path.basename(parsedUrl.pathname) || "image.iso"
+      );
+      const fileBuffer = await fetchRemoteFileBuffer(sourceUrl);
+      const task = await uploadBufferToProxmoxIso(provider, filename, fileBuffer);
+
+      json(res, 202, {
+        result: {
+          action: "import-url",
+          filename,
+          upid: task,
+        },
+      });
+    } catch (error) {
+      json(res, 502, {
+        error: "Unable to import Proxmox ISO from URL",
+        detail: error.message,
+      });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && pathname === "/v1/admin/proxmox/images/upload") {
+    const identity = verifyToken(req.headers.authorization || "");
+
+    if (!isAdminIdentity(identity)) {
+      json(res, 403, { error: "Admin access required" });
+      return;
+    }
+
+    try {
+      const filename = sanitizeImportFilename(
+        req.headers["x-upload-filename"] || req.headers["x-filename"] || "upload.iso"
+      );
+      const fileBuffer = await readRequestBuffer(req);
+
+      if (!fileBuffer.length) {
+        json(res, 400, { error: "Uploaded file is empty" });
+        return;
+      }
+
+      const providers = await listProviders();
+      const provider = providers.find(
+        (entry) => entry.id === "proxmox-primary" || entry.driver === "proxmox"
+      );
+
+      if (!provider || provider.enabled !== true) {
+        json(res, 400, { error: "Enabled Proxmox provider not found" });
+        return;
+      }
+
+      const task = await uploadBufferToProxmoxIso(
+        provider,
+        filename,
+        fileBuffer,
+        req.headers["content-type"] || "application/octet-stream"
+      );
+
+      json(res, 202, {
+        result: {
+          action: "upload-file",
+          filename,
+          upid: task,
+        },
+      });
+    } catch (error) {
+      json(res, 502, {
+        error: "Unable to upload Proxmox ISO",
         detail: error.message,
       });
     }
@@ -2178,8 +2520,13 @@ const server = http.createServer(async (req, res) => {
     const request = body ? JSON.parse(body) : {};
     const catalog = loadCatalog();
     const providers = await listProviders();
+    const imageProfiles = await listImageProfiles();
     const selection = resolveCatalogSelections(catalog, request);
     const providerSelection = resolveProviderSelection(catalog, providers, request);
+    const requestedImageProfileId = String(request.imageProfileId || "").trim();
+    const imageProfile = requestedImageProfileId
+      ? imageProfiles.find((entry) => entry.id === requestedImageProfileId) || null
+      : null;
 
     if (!providerSelection.machineType || !providerSelection.provider) {
       json(res, 400, {
@@ -2213,7 +2560,10 @@ const server = http.createServer(async (req, res) => {
 
     try {
       const sessionId = crypto.randomUUID();
-      const installConfig = resolveInstallConfig(catalog, request, identity);
+      const baseInstallConfig = resolveInstallConfig(catalog, request, identity);
+      const installConfig = imageProfile
+        ? mergeInstallConfig(baseInstallConfig, imageProfile.installConfig || {})
+        : baseInstallConfig;
       const runtimeSpec = buildRuntimeSpec(selection, installConfig);
       const internalRuntimeSpec = buildRuntimeSpec(selection, installConfig);
       const initialStatusDetail =
@@ -2232,6 +2582,10 @@ const server = http.createServer(async (req, res) => {
       }
       internalRuntimeSpec.providerRecord = providerSelection.provider;
       runtimeSpec.providerRecord = sanitizeProviderRecord(providerSelection.provider);
+      if (imageProfile) {
+        internalRuntimeSpec.imageProfile = imageProfile;
+        runtimeSpec.imageProfile = imageProfile;
+      }
       const createSessionResponse = await forwardJson(
         "/v1/sessions",
         "POST",
@@ -2244,6 +2598,7 @@ const server = http.createServer(async (req, res) => {
           instanceSizeId: selection.instanceSize.id,
           machineTypeId: providerSelection.machineType.id,
           providerId: providerSelection.provider.id,
+          imageProfileId: imageProfile?.id || null,
           installConfig,
           profileId: selection.runtimeProfile.id,
           state: "building",
@@ -2293,6 +2648,7 @@ const server = http.createServer(async (req, res) => {
         instanceSizeId: selection.instanceSize.id,
         machineTypeId: providerSelection.machineType.id,
         providerId: providerSelection.provider.id,
+        imageProfileId: imageProfile?.id || null,
         installConfig,
         desktopEnvironment: selection.runtimeInterface.id,
         connection: null,

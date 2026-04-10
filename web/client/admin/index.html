@@ -70,23 +70,37 @@
         padding: 16px;
         background: #fcfdfd;
       }
-      .provider-header {
+      .provider-card.collapsed .provider-detail {
+        display: none;
+      }
+      .provider-summary {
         display: flex;
         justify-content: space-between;
+        align-items: center;
         gap: 16px;
-        align-items: flex-start;
-        margin-bottom: 12px;
+        cursor: pointer;
+      }
+      .provider-summary-actions {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+        align-items: center;
       }
       .provider-title { margin: 0; font-size: 18px; }
       .provider-meta { margin-top: 4px; color: var(--muted); font-size: 14px; }
-      .badge {
-        display: inline-block;
-        padding: 6px 10px;
+      .toggle-button {
+        min-width: 92px;
+        padding: 10px 14px;
         border-radius: 999px;
-        background: #eaf3ff;
-        color: #184b95;
-        font-size: 12px;
+        border: 1px solid var(--line);
+        background: #eef2f5;
+        color: #586773;
         font-weight: 600;
+      }
+      .toggle-button.enabled {
+        background: #dff6f1;
+        color: #0f5f57;
+        border-color: #9dd6ca;
       }
       .provider-form {
         display: grid;
@@ -122,6 +136,11 @@
         justify-content: flex-end;
         gap: 10px;
         margin-top: 14px;
+      }
+      .ghost {
+        background: transparent;
+        color: #124743;
+        border: 1px solid var(--line);
       }
       .status-box, pre {
         border: 1px solid var(--line);
@@ -185,6 +204,7 @@
         </div>
         <div class="actions">
           <button id="backToAppButton" class="secondary" type="button">Back to Application</button>
+          <button id="openImagesButton" class="secondary" type="button">Image Management</button>
           <button id="reloadButton" class="primary" type="button">Reload Admin Data</button>
         </div>
       </header>
@@ -236,12 +256,14 @@
       const stopAllButtonEl = document.getElementById("stopAllButton");
       const removeInactiveButtonEl = document.getElementById("removeInactiveButton");
       const backToAppButtonEl = document.getElementById("backToAppButton");
+      const openImagesButtonEl = document.getElementById("openImagesButton");
       const goToAppButtonEl = document.getElementById("goToAppButton");
 
       let token = null;
       let currentIdentity = null;
       let providers = [];
       let adminSessions = [];
+      const expandedProviders = new Set();
 
       function decodeTokenPayload(tokenValue) {
         if (!tokenValue) {
@@ -339,18 +361,23 @@
         }
 
         providerListEl.innerHTML = providers
-          .map(
-            (provider) => `
-              <article class="provider-card" data-provider-id="${provider.id}">
-                <div class="provider-header">
+          .map((provider) => {
+            const expanded = expandedProviders.has(provider.id);
+            return `
+              <article class="provider-card ${expanded ? "" : "collapsed"}" data-provider-id="${provider.id}">
+                <div class="provider-summary" data-provider-summary="${provider.id}">
                   <div>
                     <h3 class="provider-title">${provider.name}</h3>
                     <div class="provider-meta">${provider.description || "No description set."}</div>
                     <div class="provider-meta">${provider.driver} • ${provider.kind} • ${provider.scope}</div>
                   </div>
-                  <span class="badge">${provider.enabled ? "Enabled" : "Disabled"}</span>
+                  <div class="provider-summary-actions">
+                    <button class="toggle-button ${provider.enabled ? "enabled" : ""}" type="button" aria-pressed="${provider.enabled ? "true" : "false"}" data-toggle-enabled-provider="${provider.id}">${provider.enabled ? "Enabled" : "Disabled"}</button>
+                    <button class="ghost" type="button" data-expand-provider="${provider.id}">${expanded ? "Collapse" : "Configure"}</button>
+                  </div>
                 </div>
-                <div class="provider-form">
+                <div class="provider-detail">
+                  <div class="provider-form">
                   <div class="field full">
                     <label>Name</label>
                     <input data-provider-name value="${provider.name.replace(/"/g, "&quot;")}" />
@@ -372,18 +399,64 @@
                     </div>
                   </div>
                   ${providerFields(provider)}
-                </div>
-                <div class="provider-actions">
-                  <button class="primary" type="button" data-save-provider="${provider.id}">Save Provider</button>
+                  </div>
+                  <div class="provider-actions">
+                    <button class="primary" type="button" data-save-provider="${provider.id}">Save Provider</button>
+                    <button class="ghost" type="button" data-collapse-provider="${provider.id}">Collapse</button>
+                  </div>
                 </div>
               </article>
-            `
-          )
+            `;
+          })
           .join("");
 
         for (const button of providerListEl.querySelectorAll("[data-save-provider]")) {
           button.addEventListener("click", async () => {
             await saveProvider(button.dataset.saveProvider);
+          });
+        }
+
+        for (const summary of providerListEl.querySelectorAll("[data-provider-summary]")) {
+          summary.addEventListener("click", (event) => {
+            if (event.target.closest("button")) {
+              return;
+            }
+
+            const providerId = summary.dataset.providerSummary;
+            if (expandedProviders.has(providerId)) {
+              expandedProviders.delete(providerId);
+            } else {
+              expandedProviders.add(providerId);
+            }
+            renderProviders();
+          });
+        }
+
+        for (const button of providerListEl.querySelectorAll("[data-expand-provider]")) {
+          button.addEventListener("click", (event) => {
+            event.stopPropagation();
+            const providerId = button.dataset.expandProvider;
+            if (expandedProviders.has(providerId)) {
+              expandedProviders.delete(providerId);
+            } else {
+              expandedProviders.add(providerId);
+            }
+            renderProviders();
+          });
+        }
+
+        for (const button of providerListEl.querySelectorAll("[data-collapse-provider]")) {
+          button.addEventListener("click", (event) => {
+            event.stopPropagation();
+            expandedProviders.delete(button.dataset.collapseProvider);
+            renderProviders();
+          });
+        }
+
+        for (const button of providerListEl.querySelectorAll("[data-toggle-enabled-provider]")) {
+          button.addEventListener("click", async (event) => {
+            event.stopPropagation();
+            await toggleProviderEnabled(button.dataset.toggleEnabledProvider);
           });
         }
       }
@@ -446,6 +519,26 @@
         });
 
         setOperationStatus(`Saved provider ${payload.provider.name}.`);
+        await loadProviders();
+      }
+
+      async function toggleProviderEnabled(providerId) {
+        const provider = providers.find((entry) => entry.id === providerId);
+
+        if (!provider) {
+          return;
+        }
+
+        setOperationStatus(`${provider.enabled ? "Disabling" : "Enabling"} provider ${provider.name}...`);
+        const payload = await api(`/api/admin/providers/${providerId}`, {
+          method: "PATCH",
+          body: JSON.stringify({
+            enabled: !provider.enabled,
+          }),
+        });
+        setOperationStatus(
+          `${payload.provider.name} is now ${payload.provider.enabled ? "enabled" : "disabled"}.`
+        );
         await loadProviders();
       }
 
@@ -514,6 +607,7 @@
       stopAllButtonEl.addEventListener("click", async () => { await stopAllSessions(); });
       removeInactiveButtonEl.addEventListener("click", async () => { await removeInactiveSessions(); });
       backToAppButtonEl.addEventListener("click", () => { window.location.href = "/"; });
+      openImagesButtonEl.addEventListener("click", () => { window.location.href = "/images"; });
       goToAppButtonEl.addEventListener("click", () => { window.location.href = "/"; });
 
       initialize().catch((error) => {

@@ -1,0 +1,646 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Virtual Workstation Image Management</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f4f7f8;
+        --panel: #ffffff;
+        --ink: #17222c;
+        --muted: #60707d;
+        --line: #d7e0e7;
+        --accent: #0f766e;
+        --accent-strong: #115e59;
+        --danger: #b42318;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+        background: linear-gradient(180deg, #eef5f3 0%, var(--bg) 100%);
+        color: var(--ink);
+      }
+      .wrap { max-width: 1280px; margin: 0 auto; padding: 32px 20px 48px; }
+      .header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 24px;
+        margin-bottom: 24px;
+      }
+      .header h1 { margin: 0 0 8px; font-size: 32px; }
+      .header p { margin: 0; color: var(--muted); line-height: 1.5; max-width: 780px; }
+      .actions { display: flex; gap: 12px; flex-wrap: wrap; }
+      button, .button {
+        border: 0;
+        border-radius: 12px;
+        padding: 12px 16px;
+        font: inherit;
+        cursor: pointer;
+      }
+      .primary { background: var(--accent); color: #fff; }
+      .secondary { background: #e7f2f0; color: #144843; }
+      .danger { background: #fdecec; color: var(--danger); }
+      .grid {
+        display: grid;
+        grid-template-columns: 1.05fr 0.95fr;
+        gap: 20px;
+      }
+      .panel {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        padding: 20px;
+        box-shadow: 0 18px 40px rgba(28, 43, 58, 0.06);
+      }
+      .panel h2 { margin: 0 0 8px; font-size: 21px; }
+      .panel p { margin: 0 0 16px; color: var(--muted); line-height: 1.5; }
+      .iso-list, .profile-list { display: grid; gap: 14px; }
+      .iso-card, .profile-card {
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        padding: 16px;
+        background: #fbfdfd;
+      }
+      .iso-card strong, .profile-card strong { display: block; margin-bottom: 4px; }
+      .meta { color: var(--muted); font-size: 14px; line-height: 1.45; }
+      .field-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 12px 14px;
+      }
+      .field { display: grid; gap: 6px; }
+      .field.full { grid-column: 1 / -1; }
+      label { font-size: 13px; font-weight: 600; color: #314151; }
+      input, textarea, select {
+        width: 100%;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 10px 12px;
+        font: inherit;
+        background: #fff;
+      }
+      textarea { min-height: 96px; resize: vertical; }
+      .inline-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 14px; }
+      .status-box {
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        background: #f9fbfc;
+        padding: 14px;
+        white-space: pre-wrap;
+        font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      }
+      .auth-warning {
+        max-width: 640px;
+        margin: 12vh auto 0;
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        padding: 28px;
+        text-align: center;
+      }
+      .hidden { display: none !important; }
+      @media (max-width: 980px) {
+        .grid { grid-template-columns: 1fr; }
+        .field-grid { grid-template-columns: 1fr; }
+        .header { flex-direction: column; }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="authWarning" class="auth-warning hidden">
+      <h1>Admin access required</h1>
+      <p>Sign in with an administrative account in the main application, then return here.</p>
+      <div class="actions" style="justify-content:center; margin-top:16px;">
+        <button id="goToAppButton" class="primary" type="button">Open Application</button>
+      </div>
+    </div>
+
+    <div id="imageApp" class="wrap hidden">
+      <header class="header">
+        <div>
+          <h1>Image Management</h1>
+          <p>
+            Review installer ISOs available on Proxmox and define reusable VM image profiles with
+            unattended install defaults and additional packages. Enabled profiles are available on
+            the session launch screen.
+          </p>
+        </div>
+        <div class="actions">
+          <button id="backToAppButton" class="secondary" type="button">Back to Application</button>
+          <button id="openAdminButton" class="secondary" type="button">Open Admin Console</button>
+          <button id="reloadButton" class="primary" type="button">Reload Image Data</button>
+        </div>
+      </header>
+
+      <section class="grid">
+        <div style="display:grid; gap:20px;">
+          <article class="panel">
+            <h2>Proxmox Installer Images</h2>
+            <p>Current ISO content from the configured Proxmox storage. Select a volume ID when defining an image profile.</p>
+            <div class="field-grid" style="margin-bottom:16px;">
+              <div class="field full">
+                <label for="isoSourceUrl">Download ISO from URL</label>
+                <input id="isoSourceUrl" placeholder="https://example.com/path/to/image.iso" />
+              </div>
+              <div class="field">
+                <label for="isoSourceFilename">Filename override</label>
+                <input id="isoSourceFilename" placeholder="xubuntu-24.04.iso" />
+              </div>
+              <div class="field" style="align-self:end;">
+                <button id="downloadIsoButton" class="primary" type="button">Download to Proxmox</button>
+              </div>
+              <div class="field full">
+                <label for="isoUploadFile">Upload local ISO file</label>
+                <input id="isoUploadFile" type="file" accept=".iso,application/x-iso9660-image,application/octet-stream" />
+              </div>
+              <div class="field" style="align-self:end;">
+                <button id="uploadIsoButton" class="secondary" type="button">Upload File to Proxmox</button>
+              </div>
+            </div>
+            <div id="isoList" class="iso-list"></div>
+          </article>
+
+          <article class="panel">
+            <h2>Image Profiles</h2>
+            <p>Reusable unattended install presets for Proxmox VM sessions.</p>
+            <div id="profileList" class="profile-list"></div>
+          </article>
+        </div>
+
+        <article class="panel">
+          <h2 id="editorHeading">Create Image Profile</h2>
+          <p>Choose the installer ISO, defaults, and extra packages that should be applied during unattended install.</p>
+
+          <div class="field-grid">
+            <div class="field">
+              <label for="profileName">Profile name</label>
+              <input id="profileName" />
+            </div>
+
+            <div class="field">
+              <label for="profileProvider">Provider</label>
+              <select id="profileProvider">
+                <option value="proxmox-primary">Proxmox VE</option>
+              </select>
+            </div>
+
+            <div class="field">
+              <label for="profileDistribution">Distribution</label>
+              <select id="profileDistribution"></select>
+            </div>
+
+            <div class="field">
+              <label for="profileInterface">Interface</label>
+              <select id="profileInterface"></select>
+            </div>
+
+            <div class="field full">
+              <label for="profileDescription">Description</label>
+              <textarea id="profileDescription"></textarea>
+            </div>
+
+            <div class="field full">
+              <label for="profileInstallerIso">Installer ISO</label>
+              <select id="profileInstallerIso">
+                <option value="">Use provider default ISO</option>
+              </select>
+            </div>
+
+            <div class="field">
+              <label for="profileLocale">Locale</label>
+              <select id="profileLocale"></select>
+            </div>
+
+            <div class="field">
+              <label for="profileKeyboardLayout">Keyboard layout</label>
+              <select id="profileKeyboardLayout"></select>
+            </div>
+
+            <div class="field">
+              <label for="profileTimezone">Timezone</label>
+              <select id="profileTimezone"></select>
+            </div>
+
+            <div class="field">
+              <label for="profileHostname">Hostname</label>
+              <input id="profileHostname" placeholder="vw-demo" />
+            </div>
+
+            <div class="field full">
+              <label for="profilePackages">Additional packages</label>
+              <textarea id="profilePackages" placeholder="firefox&#10;curl&#10;git"></textarea>
+            </div>
+
+            <div class="field full">
+              <label for="profileEnabled">Availability</label>
+              <select id="profileEnabled">
+                <option value="true">Enabled</option>
+                <option value="false">Disabled</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="inline-actions">
+            <button id="saveProfileButton" class="primary" type="button">Save Profile</button>
+            <button id="resetProfileButton" class="secondary" type="button">Reset Form</button>
+          </div>
+
+          <pre id="statusBox" class="status-box">Image management is ready.</pre>
+        </article>
+      </section>
+    </div>
+
+    <script>
+      const TOKEN_STORAGE_KEY = "virtualworkstation.token";
+      const authWarningEl = document.getElementById("authWarning");
+      const imageAppEl = document.getElementById("imageApp");
+      const goToAppButtonEl = document.getElementById("goToAppButton");
+      const backToAppButtonEl = document.getElementById("backToAppButton");
+      const openAdminButtonEl = document.getElementById("openAdminButton");
+      const reloadButtonEl = document.getElementById("reloadButton");
+      const isoListEl = document.getElementById("isoList");
+      const isoSourceUrlEl = document.getElementById("isoSourceUrl");
+      const isoSourceFilenameEl = document.getElementById("isoSourceFilename");
+      const isoUploadFileEl = document.getElementById("isoUploadFile");
+      const downloadIsoButtonEl = document.getElementById("downloadIsoButton");
+      const uploadIsoButtonEl = document.getElementById("uploadIsoButton");
+      const profileListEl = document.getElementById("profileList");
+      const editorHeadingEl = document.getElementById("editorHeading");
+      const statusBoxEl = document.getElementById("statusBox");
+      const profileNameEl = document.getElementById("profileName");
+      const profileProviderEl = document.getElementById("profileProvider");
+      const profileDistributionEl = document.getElementById("profileDistribution");
+      const profileInterfaceEl = document.getElementById("profileInterface");
+      const profileDescriptionEl = document.getElementById("profileDescription");
+      const profileInstallerIsoEl = document.getElementById("profileInstallerIso");
+      const profileLocaleEl = document.getElementById("profileLocale");
+      const profileKeyboardLayoutEl = document.getElementById("profileKeyboardLayout");
+      const profileTimezoneEl = document.getElementById("profileTimezone");
+      const profileHostnameEl = document.getElementById("profileHostname");
+      const profilePackagesEl = document.getElementById("profilePackages");
+      const profileEnabledEl = document.getElementById("profileEnabled");
+      const saveProfileButtonEl = document.getElementById("saveProfileButton");
+      const resetProfileButtonEl = document.getElementById("resetProfileButton");
+
+      let token = null;
+      let currentIdentity = null;
+      let catalog = null;
+      let proxmoxImages = [];
+      let imageProfiles = [];
+      let editingProfileId = null;
+
+      function decodeTokenPayload(tokenValue) {
+        if (!tokenValue) return null;
+        const [payload] = tokenValue.split(".");
+        if (!payload) return null;
+        try {
+          return JSON.parse(atob(payload.replace(/-/g, "+").replace(/_/g, "/")));
+        } catch (error) {
+          return null;
+        }
+      }
+
+      function isAdmin() {
+        return Boolean(
+          currentIdentity &&
+            (currentIdentity.isAdmin ||
+              currentIdentity.role === "admin" ||
+              currentIdentity.username === "demo")
+        );
+      }
+
+      function setStatus(value) {
+        statusBoxEl.textContent = value;
+      }
+
+      function loadStoredAuthState() {
+        token = localStorage.getItem(TOKEN_STORAGE_KEY);
+        currentIdentity = decodeTokenPayload(token || "");
+      }
+
+      function showAuthedView() {
+        authWarningEl.classList.add("hidden");
+        imageAppEl.classList.remove("hidden");
+      }
+
+      function showBlockedView() {
+        imageAppEl.classList.add("hidden");
+        authWarningEl.classList.remove("hidden");
+      }
+
+      function populateCatalogSelectors() {
+        profileDistributionEl.innerHTML = (catalog?.distributions || [])
+          .map((entry) => `<option value="${entry.id}">${entry.name}</option>`)
+          .join("");
+        profileInterfaceEl.innerHTML = (catalog?.interfaces || [])
+          .map((entry) => `<option value="${entry.id}">${entry.name}</option>`)
+          .join("");
+        profileLocaleEl.innerHTML = (catalog?.installOptions?.locales || [])
+          .map((entry) => `<option value="${entry.id}">${entry.name}</option>`)
+          .join("");
+        profileKeyboardLayoutEl.innerHTML = (catalog?.installOptions?.keyboardLayouts || [])
+          .map((entry) => `<option value="${entry.id}">${entry.name}</option>`)
+          .join("");
+        profileTimezoneEl.innerHTML = (catalog?.installOptions?.timezones || [])
+          .map((entry) => `<option value="${entry.id}">${entry.name}</option>`)
+          .join("");
+      }
+
+      function populateIsoOptions() {
+        profileInstallerIsoEl.innerHTML = [
+          `<option value="">Use provider default ISO</option>`,
+          ...proxmoxImages.map(
+            (entry) => `<option value="${entry.volid}">${entry.volid}</option>`
+          ),
+        ].join("");
+      }
+
+      function renderIsoList() {
+        isoListEl.innerHTML = proxmoxImages.length
+          ? proxmoxImages
+              .map(
+                (entry) => `
+                  <div class="iso-card">
+                    <strong>${entry.volid}</strong>
+                    <div class="meta">
+                      Storage: ${entry.storage || "n/a"}<br />
+                      Size: ${entry.size || "n/a"}
+                    </div>
+                  </div>
+                `
+              )
+              .join("")
+          : '<div class="iso-card"><strong>No Proxmox ISO images found.</strong><div class="meta">Check the configured Proxmox provider and ISO storage.</div></div>';
+      }
+
+      function renderProfiles() {
+        profileListEl.innerHTML = imageProfiles.length
+          ? imageProfiles
+              .map(
+                (entry) => `
+                  <div class="profile-card">
+                    <strong>${entry.name}</strong>
+                    <div class="meta">
+                      ${entry.description || "No description"}<br />
+                      ${entry.distributionId || "n/a"} / ${entry.interfaceId || "n/a"}<br />
+                      ${entry.installerIsoVolid || "Provider default ISO"}<br />
+                      ${entry.enabled !== false ? "Enabled" : "Disabled"}
+                    </div>
+                    <div class="inline-actions">
+                      <button class="secondary" data-edit-id="${entry.id}" type="button">Edit</button>
+                      <button class="danger" data-delete-id="${entry.id}" type="button">Delete</button>
+                    </div>
+                  </div>
+                `
+              )
+              .join("")
+          : '<div class="profile-card"><strong>No image profiles yet.</strong><div class="meta">Create one to make it selectable from the session launcher.</div></div>';
+
+        for (const button of profileListEl.querySelectorAll("[data-edit-id]")) {
+          button.addEventListener("click", () => {
+            const profile = imageProfiles.find((entry) => entry.id === button.dataset.editId);
+            if (!profile) return;
+            editingProfileId = profile.id;
+            editorHeadingEl.textContent = `Edit ${profile.name}`;
+            profileNameEl.value = profile.name || "";
+            profileProviderEl.value = profile.providerId || "proxmox-primary";
+            profileDistributionEl.value = profile.distributionId || "";
+            profileInterfaceEl.value = profile.interfaceId || "";
+            profileDescriptionEl.value = profile.description || "";
+            profileInstallerIsoEl.value = profile.installerIsoVolid || "";
+            profileLocaleEl.value = profile.installConfig?.locale || "";
+            profileKeyboardLayoutEl.value = profile.installConfig?.keyboardLayout || "";
+            profileTimezoneEl.value = profile.installConfig?.timezone || "";
+            profileHostnameEl.value = profile.installConfig?.hostname || "";
+            profilePackagesEl.value = (profile.packages || []).join("\n");
+            profileEnabledEl.value = String(profile.enabled !== false);
+            setStatus(`Editing image profile ${profile.name}.`);
+          });
+        }
+
+        for (const button of profileListEl.querySelectorAll("[data-delete-id]")) {
+          button.addEventListener("click", async () => {
+            if (!window.confirm("Delete this image profile?")) return;
+            const response = await fetch(`/api/admin/image-profiles/${button.dataset.deleteId}`, {
+              method: "DELETE",
+              headers: { Authorization: `Bearer ${token}` },
+            });
+            const payload = await response.json();
+            if (!response.ok) {
+              setStatus(payload.detail || payload.error || "Unable to delete image profile.");
+              return;
+            }
+            await loadImageProfiles();
+            resetForm();
+            setStatus(`Deleted image profile ${payload.imageProfile?.name || button.dataset.deleteId}.`);
+          });
+        }
+      }
+
+      function resetForm() {
+        editingProfileId = null;
+        editorHeadingEl.textContent = "Create Image Profile";
+        profileNameEl.value = "";
+        profileProviderEl.value = "proxmox-primary";
+        profileDistributionEl.value = catalog?.policies?.defaultDistributionId || "";
+        profileInterfaceEl.value = catalog?.policies?.defaultInterfaceId || "";
+        profileDescriptionEl.value = "";
+        profileInstallerIsoEl.value = "";
+        profileLocaleEl.value = catalog?.policies?.defaultInstallConfig?.locale || "";
+        profileKeyboardLayoutEl.value = catalog?.policies?.defaultInstallConfig?.keyboardLayout || "";
+        profileTimezoneEl.value = catalog?.policies?.defaultInstallConfig?.timezone || "";
+        profileHostnameEl.value = "vw-demo";
+        profilePackagesEl.value = "";
+        profileEnabledEl.value = "true";
+      }
+
+      async function loadCatalog() {
+        const response = await fetch("/api/catalog");
+        catalog = await response.json();
+        populateCatalogSelectors();
+      }
+
+      async function loadProxmoxImages() {
+        const response = await fetch("/api/admin/proxmox/images", {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const payload = await response.json();
+        proxmoxImages = payload.images || [];
+        populateIsoOptions();
+        renderIsoList();
+      }
+
+      async function importIsoFromUrl() {
+        setStatus("Requesting Proxmox ISO download...");
+        const response = await fetch("/api/admin/proxmox/images/import-url", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            url: isoSourceUrlEl.value,
+            filename: isoSourceFilenameEl.value,
+          }),
+        });
+        const payload = await response.json();
+
+        if (!response.ok) {
+          setStatus(payload.detail || payload.error || "Unable to download ISO to Proxmox.");
+          return;
+        }
+
+        setStatus(
+          `Proxmox ISO download queued.\nFilename: ${payload.result?.filename || "n/a"}\nTask: ${
+            payload.result?.upid || "n/a"
+          }`
+        );
+        await loadProxmoxImages();
+      }
+
+      async function uploadIsoFile() {
+        const file = isoUploadFileEl.files?.[0];
+
+        if (!file) {
+          setStatus("Choose a local ISO file first.");
+          return;
+        }
+
+        setStatus(`Uploading ${file.name} to Proxmox ISO storage...`);
+        const response = await fetch("/api/admin/proxmox/images/upload", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": file.type || "application/octet-stream",
+            "X-Upload-Filename": file.name,
+          },
+          body: file,
+        });
+        const payload = await response.json();
+
+        if (!response.ok) {
+          setStatus(payload.detail || payload.error || "Unable to upload ISO to Proxmox.");
+          return;
+        }
+
+        setStatus(
+          `Proxmox ISO upload queued.\nFilename: ${payload.result?.filename || file.name}\nTask: ${
+            payload.result?.upid || "n/a"
+          }`
+        );
+        isoUploadFileEl.value = "";
+        await loadProxmoxImages();
+      }
+
+      async function loadImageProfiles() {
+        const response = await fetch("/api/admin/image-profiles", {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const payload = await response.json();
+        imageProfiles = payload.imageProfiles || [];
+        renderProfiles();
+      }
+
+      async function saveProfile() {
+        const body = {
+          name: profileNameEl.value,
+          providerId: profileProviderEl.value,
+          distributionId: profileDistributionEl.value,
+          interfaceId: profileInterfaceEl.value,
+          description: profileDescriptionEl.value,
+          installerIsoVolid: profileInstallerIsoEl.value,
+          enabled: profileEnabledEl.value === "true",
+          installConfig: {
+            locale: profileLocaleEl.value,
+            keyboardLayout: profileKeyboardLayoutEl.value,
+            timezone: profileTimezoneEl.value,
+            hostname: profileHostnameEl.value,
+          },
+          packages: profilePackagesEl.value
+            .split("\n")
+            .map((entry) => entry.trim())
+            .filter(Boolean),
+        };
+
+        const response = await fetch(
+          editingProfileId
+            ? `/api/admin/image-profiles/${editingProfileId}`
+            : "/api/admin/image-profiles",
+          {
+            method: editingProfileId ? "PATCH" : "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify(body),
+          }
+        );
+        const payload = await response.json();
+
+        if (!response.ok) {
+          setStatus(payload.detail || payload.error || "Unable to save image profile.");
+          return;
+        }
+
+        await loadImageProfiles();
+        resetForm();
+        setStatus(
+          `${editingProfileId ? "Updated" : "Created"} image profile ${
+            payload.imageProfile?.name || body.name
+          }.`
+        );
+      }
+
+      async function initialize() {
+        loadStoredAuthState();
+
+        if (!token || !isAdmin()) {
+          showBlockedView();
+          return;
+        }
+
+        showAuthedView();
+        await loadCatalog();
+        await loadProxmoxImages();
+        await loadImageProfiles();
+        resetForm();
+        setStatus("Image management data loaded.");
+      }
+
+      goToAppButtonEl.addEventListener("click", () => {
+        window.location.href = "/";
+      });
+      backToAppButtonEl.addEventListener("click", () => {
+        window.location.href = "/";
+      });
+      openAdminButtonEl.addEventListener("click", () => {
+        window.location.href = "/admin";
+      });
+      reloadButtonEl.addEventListener("click", async () => {
+        await initialize();
+      });
+      downloadIsoButtonEl.addEventListener("click", async () => {
+        await importIsoFromUrl();
+      });
+      uploadIsoButtonEl.addEventListener("click", async () => {
+        await uploadIsoFile();
+      });
+      saveProfileButtonEl.addEventListener("click", async () => {
+        await saveProfile();
+      });
+      resetProfileButtonEl.addEventListener("click", () => {
+        resetForm();
+        setStatus("Image profile form reset.");
+      });
+
+      initialize().catch((error) => {
+        showBlockedView();
+        console.error(error);
+      });
+    </script>
+  </body>
+</html>

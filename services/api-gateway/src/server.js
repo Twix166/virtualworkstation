@@ -31,6 +31,17 @@ function readRequestBody(req) {
   });
 }
 
+function readRequestBuffer(req) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    req.on("data", (chunk) => {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    });
+    req.on("end", () => resolve(Buffer.concat(chunks)));
+    req.on("error", reject);
+  });
+}
+
 function forwardJson(targetBaseUrl, route, method, body, headers = {}) {
   return new Promise((resolve, reject) => {
     const target = new URL(route, targetBaseUrl);
@@ -97,6 +108,42 @@ function forwardRaw(targetBaseUrl, route, method, headers = {}) {
     );
 
     request.on("error", reject);
+    request.end();
+  });
+}
+
+function forwardBuffer(targetBaseUrl, route, method, buffer, headers = {}) {
+  return new Promise((resolve, reject) => {
+    const target = new URL(route, targetBaseUrl);
+    const request = http.request(
+      target,
+      {
+        method,
+        headers,
+      },
+      (response) => {
+        let responseBody = "";
+        response.setEncoding("utf8");
+        response.on("data", (chunk) => {
+          responseBody += chunk;
+        });
+        response.on("end", () => {
+          try {
+            resolve({
+              statusCode: response.statusCode || 500,
+              payload: responseBody ? JSON.parse(responseBody) : {},
+            });
+          } catch (error) {
+            reject(error);
+          }
+        });
+      }
+    );
+
+    request.on("error", reject);
+    if (buffer?.length) {
+      request.write(buffer);
+    }
     request.end();
   });
 }
@@ -513,6 +560,170 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === "GET" && req.url === "/api/admin/image-profiles") {
+    const payload = decodeBearerPayload(req.headers.authorization || "");
+
+    if (!isAdminPayload(payload)) {
+      json(res, 403, { error: "Admin access required" });
+      return;
+    }
+
+    try {
+      const response = await forwardJson(
+        dataServiceUrl,
+        "/v1/platform/image-profiles",
+        "GET"
+      );
+      json(res, response.statusCode, response.payload);
+    } catch (error) {
+      json(res, 502, {
+        error: "Data service unavailable",
+        detail: error.message,
+      });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && req.url === "/api/admin/image-profiles") {
+    const payload = decodeBearerPayload(req.headers.authorization || "");
+
+    if (!isAdminPayload(payload)) {
+      json(res, 403, { error: "Admin access required" });
+      return;
+    }
+
+    try {
+      const body = await readRequestBody(req);
+      const response = await forwardJson(
+        dataServiceUrl,
+        "/v1/platform/image-profiles",
+        "POST",
+        body
+      );
+      json(res, response.statusCode, response.payload);
+    } catch (error) {
+      json(res, 502, {
+        error: "Data service unavailable",
+        detail: error.message,
+      });
+    }
+    return;
+  }
+
+  if (
+    (req.method === "PATCH" || req.method === "DELETE") &&
+    req.url.startsWith("/api/admin/image-profiles/")
+  ) {
+    const payload = decodeBearerPayload(req.headers.authorization || "");
+
+    if (!isAdminPayload(payload)) {
+      json(res, 403, { error: "Admin access required" });
+      return;
+    }
+
+    try {
+      const body = req.method === "PATCH" ? await readRequestBody(req) : "";
+      const response = await forwardJson(
+        dataServiceUrl,
+        req.url.replace("/api/admin", "/v1/platform"),
+        req.method,
+        body
+      );
+      json(res, response.statusCode, response.payload);
+    } catch (error) {
+      json(res, 502, {
+        error: "Data service unavailable",
+        detail: error.message,
+      });
+    }
+    return;
+  }
+
+  if (req.method === "GET" && req.url === "/api/admin/proxmox/images") {
+    const payload = decodeBearerPayload(req.headers.authorization || "");
+
+    if (!isAdminPayload(payload)) {
+      json(res, 403, { error: "Admin access required" });
+      return;
+    }
+
+    try {
+      const response = await forwardJson(
+        workspaceServiceUrl,
+        "/v1/admin/proxmox/images",
+        "GET",
+        "",
+        { Authorization: req.headers.authorization || "" }
+      );
+      json(res, response.statusCode, response.payload);
+    } catch (error) {
+      json(res, 502, {
+        error: "Workspace service unavailable",
+        detail: error.message,
+      });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && req.url === "/api/admin/proxmox/images/import-url") {
+    const payload = decodeBearerPayload(req.headers.authorization || "");
+
+    if (!isAdminPayload(payload)) {
+      json(res, 403, { error: "Admin access required" });
+      return;
+    }
+
+    try {
+      const body = await readRequestBody(req);
+      const response = await forwardJson(
+        workspaceServiceUrl,
+        "/v1/admin/proxmox/images/import-url",
+        "POST",
+        body,
+        { Authorization: req.headers.authorization || "" }
+      );
+      json(res, response.statusCode, response.payload);
+    } catch (error) {
+      json(res, 502, {
+        error: "Workspace service unavailable",
+        detail: error.message,
+      });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && req.url === "/api/admin/proxmox/images/upload") {
+    const payload = decodeBearerPayload(req.headers.authorization || "");
+
+    if (!isAdminPayload(payload)) {
+      json(res, 403, { error: "Admin access required" });
+      return;
+    }
+
+    try {
+      const buffer = await readRequestBuffer(req);
+      const response = await forwardBuffer(
+        workspaceServiceUrl,
+        "/v1/admin/proxmox/images/upload",
+        "POST",
+        buffer,
+        {
+          Authorization: req.headers.authorization || "",
+          "Content-Type": req.headers["content-type"] || "application/octet-stream",
+          "Content-Length": String(buffer.length),
+          "X-Upload-Filename": req.headers["x-upload-filename"] || "",
+        }
+      );
+      json(res, response.statusCode, response.payload);
+    } catch (error) {
+      json(res, 502, {
+        error: "Workspace service unavailable",
+        detail: error.message,
+      });
+    }
+    return;
+  }
+
   if (
     req.method === "POST" &&
     req.url.startsWith("/api/workspaces/") &&
@@ -602,6 +813,8 @@ const server = http.createServer(async (req, res) => {
       ? "/index.html"
       : req.url === "/admin" || req.url === "/admin/"
         ? "/admin/index.html"
+        : req.url === "/images" || req.url === "/images/"
+          ? "/images/index.html"
         : req.url;
   const filePath = path.join(clientDir, requestedPath);
 
