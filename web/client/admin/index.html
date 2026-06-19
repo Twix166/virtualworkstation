@@ -157,6 +157,24 @@
         gap: 10px;
         margin-bottom: 14px;
       }
+      .ssh-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 16px;
+      }
+      .ssh-list {
+        display: grid;
+        gap: 10px;
+        margin-top: 14px;
+      }
+      .ssh-item {
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        padding: 12px;
+        background: #fcfdfd;
+      }
+      .ssh-item strong { display: block; }
+      .ssh-item span { display: block; color: var(--muted); font-size: 13px; margin-top: 4px; }
       .summary-row {
         display: flex;
         justify-content: space-between;
@@ -179,6 +197,7 @@
       .hidden { display: none !important; }
       @media (max-width: 960px) {
         .grid { grid-template-columns: 1fr; }
+        .ssh-grid { grid-template-columns: 1fr; }
         .provider-form { grid-template-columns: 1fr; }
         .header { flex-direction: column; }
       }
@@ -239,6 +258,96 @@
           </div>
         </div>
       </section>
+
+      <section class="panel" style="margin-top:20px;">
+        <h2>SSH Access Management</h2>
+        <p>
+          Register approved network hosts, key-based credentials, and launchable SSH profiles.
+          Private keys are stored server-side and are never sent back to the browser after save.
+        </p>
+
+        <div class="ssh-grid">
+          <div>
+            <h3>Hosts</h3>
+            <div class="field">
+              <label for="sshHostName">Name</label>
+              <input id="sshHostName" placeholder="Proxmox Host" />
+            </div>
+            <div class="field">
+              <label for="sshHostHostname">Hostname or IP</label>
+              <input id="sshHostHostname" placeholder="10.0.0.84" />
+            </div>
+            <div class="field">
+              <label for="sshHostPort">Port</label>
+              <input id="sshHostPort" type="number" min="1" value="22" />
+            </div>
+            <div class="checks">
+              <label class="check">
+                <input id="sshHostEnabled" type="checkbox" checked />
+                <span>Enabled</span>
+              </label>
+            </div>
+            <div class="inline-actions">
+              <button id="saveSshHostButton" class="primary" type="button">Save Host</button>
+            </div>
+            <div id="sshHostList" class="ssh-list"></div>
+          </div>
+
+          <div>
+            <h3>Credentials</h3>
+            <div class="field">
+              <label for="sshCredentialName">Name</label>
+              <input id="sshCredentialName" placeholder="Demo SSH Key" />
+            </div>
+            <div class="field">
+              <label for="sshCredentialUsername">SSH username</label>
+              <input id="sshCredentialUsername" placeholder="demo" />
+            </div>
+            <div class="field">
+              <label for="sshCredentialPrivateKey">Private key</label>
+              <textarea id="sshCredentialPrivateKey" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"></textarea>
+            </div>
+            <div class="field">
+              <label for="sshCredentialPassphrase">Passphrase</label>
+              <input id="sshCredentialPassphrase" type="password" placeholder="Optional" />
+            </div>
+            <div class="inline-actions">
+              <button id="saveSshCredentialButton" class="primary" type="button">Save Credential</button>
+            </div>
+            <div id="sshCredentialList" class="ssh-list"></div>
+          </div>
+
+          <div>
+            <h3>Profiles</h3>
+            <div class="field">
+              <label for="sshProfileName">Name</label>
+              <input id="sshProfileName" placeholder="Proxmox Admin Shell" />
+            </div>
+            <div class="field">
+              <label for="sshProfileHost">Host</label>
+              <select id="sshProfileHost"></select>
+            </div>
+            <div class="field">
+              <label for="sshProfileCredential">Credential</label>
+              <select id="sshProfileCredential"></select>
+            </div>
+            <div class="field">
+              <label for="sshProfileShell">Shell command</label>
+              <input id="sshProfileShell" placeholder="/bin/bash optional" />
+            </div>
+            <div class="checks">
+              <label class="check">
+                <input id="sshProfileEnabled" type="checkbox" checked />
+                <span>Enabled</span>
+              </label>
+            </div>
+            <div class="inline-actions">
+              <button id="saveSshProfileButton" class="primary" type="button">Save Profile</button>
+            </div>
+            <div id="sshProfileList" class="ssh-list"></div>
+          </div>
+        </div>
+      </section>
     </div>
 
     <script>
@@ -258,11 +367,33 @@
       const backToAppButtonEl = document.getElementById("backToAppButton");
       const openImagesButtonEl = document.getElementById("openImagesButton");
       const goToAppButtonEl = document.getElementById("goToAppButton");
+      const sshHostNameEl = document.getElementById("sshHostName");
+      const sshHostHostnameEl = document.getElementById("sshHostHostname");
+      const sshHostPortEl = document.getElementById("sshHostPort");
+      const sshHostEnabledEl = document.getElementById("sshHostEnabled");
+      const saveSshHostButtonEl = document.getElementById("saveSshHostButton");
+      const sshHostListEl = document.getElementById("sshHostList");
+      const sshCredentialNameEl = document.getElementById("sshCredentialName");
+      const sshCredentialUsernameEl = document.getElementById("sshCredentialUsername");
+      const sshCredentialPrivateKeyEl = document.getElementById("sshCredentialPrivateKey");
+      const sshCredentialPassphraseEl = document.getElementById("sshCredentialPassphrase");
+      const saveSshCredentialButtonEl = document.getElementById("saveSshCredentialButton");
+      const sshCredentialListEl = document.getElementById("sshCredentialList");
+      const sshProfileNameEl = document.getElementById("sshProfileName");
+      const sshProfileHostEl = document.getElementById("sshProfileHost");
+      const sshProfileCredentialEl = document.getElementById("sshProfileCredential");
+      const sshProfileShellEl = document.getElementById("sshProfileShell");
+      const sshProfileEnabledEl = document.getElementById("sshProfileEnabled");
+      const saveSshProfileButtonEl = document.getElementById("saveSshProfileButton");
+      const sshProfileListEl = document.getElementById("sshProfileList");
 
       let token = null;
       let currentIdentity = null;
       let providers = [];
       let adminSessions = [];
+      let sshHosts = [];
+      let sshCredentials = [];
+      let sshProfiles = [];
       const expandedProviders = new Set();
 
       function decodeTokenPayload(tokenValue) {
@@ -324,6 +455,120 @@
             `
           )
           .join("");
+      }
+
+      function renderSshData() {
+        sshHostListEl.innerHTML = sshHosts.length
+          ? sshHosts
+              .map(
+                (host) => `
+                  <div class="ssh-item">
+                    <strong>${host.name}</strong>
+                    <span>${host.hostname}:${host.port || 22} • ${host.enabled ? "Enabled" : "Disabled"}</span>
+                    <div class="inline-actions">
+                      <button class="ghost" type="button" data-edit-ssh-host="${host.id}">Edit</button>
+                      <button class="danger" type="button" data-delete-ssh-host="${host.id}">Delete</button>
+                    </div>
+                  </div>
+                `
+              )
+              .join("")
+          : `<div class="status-box">No SSH hosts configured.</div>`;
+
+        sshCredentialListEl.innerHTML = sshCredentials.length
+          ? sshCredentials
+              .map(
+                (credential) => `
+                  <div class="ssh-item">
+                    <strong>${credential.name}</strong>
+                    <span>${credential.username} • ${credential.hasPrivateKey ? "Key stored" : "No key"}</span>
+                    <div class="inline-actions">
+                      <button class="ghost" type="button" data-edit-ssh-credential="${credential.id}">Edit</button>
+                      <button class="danger" type="button" data-delete-ssh-credential="${credential.id}">Delete</button>
+                    </div>
+                  </div>
+                `
+              )
+              .join("")
+          : `<div class="status-box">No SSH credentials configured.</div>`;
+
+        sshProfileHostEl.innerHTML = sshHosts
+          .map((host) => `<option value="${host.id}">${host.name} (${host.hostname})</option>`)
+          .join("");
+        sshProfileCredentialEl.innerHTML = sshCredentials
+          .map((credential) => `<option value="${credential.id}">${credential.name} (${credential.username})</option>`)
+          .join("");
+
+        sshProfileListEl.innerHTML = sshProfiles.length
+          ? sshProfiles
+              .map((profile) => {
+                const host = sshHosts.find((entry) => entry.id === profile.hostId);
+                const credential = sshCredentials.find((entry) => entry.id === profile.credentialId);
+                return `
+                  <div class="ssh-item">
+                    <strong>${profile.name}</strong>
+                    <span>${host?.name || "Unknown host"} • ${credential?.username || "Unknown user"} • ${profile.enabled ? "Enabled" : "Disabled"}</span>
+                    <div class="inline-actions">
+                      <button class="ghost" type="button" data-edit-ssh-profile="${profile.id}">Edit</button>
+                      <button class="danger" type="button" data-delete-ssh-profile="${profile.id}">Delete</button>
+                    </div>
+                  </div>
+                `;
+              })
+              .join("")
+          : `<div class="status-box">No SSH profiles configured.</div>`;
+
+        for (const button of sshHostListEl.querySelectorAll("[data-edit-ssh-host]")) {
+          button.addEventListener("click", () => {
+            const host = sshHosts.find((entry) => entry.id === button.dataset.editSshHost);
+            if (!host) return;
+            sshHostNameEl.value = host.name || "";
+            sshHostHostnameEl.value = host.hostname || "";
+            sshHostPortEl.value = host.port || 22;
+            sshHostEnabledEl.checked = host.enabled !== false;
+            saveSshHostButtonEl.dataset.editId = host.id;
+          });
+        }
+        for (const button of sshCredentialListEl.querySelectorAll("[data-edit-ssh-credential]")) {
+          button.addEventListener("click", () => {
+            const credential = sshCredentials.find((entry) => entry.id === button.dataset.editSshCredential);
+            if (!credential) return;
+            sshCredentialNameEl.value = credential.name || "";
+            sshCredentialUsernameEl.value = credential.username || "";
+            sshCredentialPrivateKeyEl.value = "";
+            sshCredentialPrivateKeyEl.placeholder = credential.hasPrivateKey
+              ? "Existing private key is retained if left blank"
+              : "-----BEGIN OPENSSH PRIVATE KEY-----";
+            sshCredentialPassphraseEl.value = "";
+            saveSshCredentialButtonEl.dataset.editId = credential.id;
+          });
+        }
+        for (const button of sshProfileListEl.querySelectorAll("[data-edit-ssh-profile]")) {
+          button.addEventListener("click", () => {
+            const profile = sshProfiles.find((entry) => entry.id === button.dataset.editSshProfile);
+            if (!profile) return;
+            sshProfileNameEl.value = profile.name || "";
+            sshProfileHostEl.value = profile.hostId || "";
+            sshProfileCredentialEl.value = profile.credentialId || "";
+            sshProfileShellEl.value = profile.shell || "";
+            sshProfileEnabledEl.checked = profile.enabled !== false;
+            saveSshProfileButtonEl.dataset.editId = profile.id;
+          });
+        }
+        for (const button of document.querySelectorAll("[data-delete-ssh-host],[data-delete-ssh-credential],[data-delete-ssh-profile]")) {
+          button.addEventListener("click", async () => {
+            const id =
+              button.dataset.deleteSshHost ||
+              button.dataset.deleteSshCredential ||
+              button.dataset.deleteSshProfile;
+            const resource = button.dataset.deleteSshHost
+              ? "ssh-hosts"
+              : button.dataset.deleteSshCredential
+                ? "ssh-credentials"
+                : "ssh-profiles";
+            await deleteSshResource(resource, id);
+          });
+        }
       }
 
       function providerFields(provider) {
@@ -491,6 +736,97 @@
         renderSessionSummary();
       }
 
+      async function loadSshData() {
+        const [hostsPayload, credentialsPayload, profilesPayload] = await Promise.all([
+          api("/api/admin/ssh-hosts"),
+          api("/api/admin/ssh-credentials"),
+          api("/api/admin/ssh-profiles"),
+        ]);
+        sshHosts = hostsPayload.sshHosts || [];
+        sshCredentials = credentialsPayload.sshCredentials || [];
+        sshProfiles = profilesPayload.sshProfiles || [];
+        renderSshData();
+      }
+
+      async function saveSshHost() {
+        const editId = saveSshHostButtonEl.dataset.editId;
+        const payload = await api(editId ? `/api/admin/ssh-hosts/${editId}` : "/api/admin/ssh-hosts", {
+          method: editId ? "PATCH" : "POST",
+          body: JSON.stringify({
+            name: sshHostNameEl.value,
+            hostname: sshHostHostnameEl.value,
+            port: Number(sshHostPortEl.value || 22),
+            enabled: sshHostEnabledEl.checked,
+          }),
+        });
+        setOperationStatus(`Saved SSH host ${payload.sshHost.name}.`);
+        delete saveSshHostButtonEl.dataset.editId;
+        sshHostNameEl.value = "";
+        sshHostHostnameEl.value = "";
+        sshHostPortEl.value = "22";
+        sshHostEnabledEl.checked = true;
+        await loadSshData();
+      }
+
+      async function saveSshCredential() {
+        const editId = saveSshCredentialButtonEl.dataset.editId;
+        const body = {
+          name: sshCredentialNameEl.value,
+          username: sshCredentialUsernameEl.value,
+          passphrase: sshCredentialPassphraseEl.value,
+        };
+        if (sshCredentialPrivateKeyEl.value.trim()) {
+          body.privateKey = sshCredentialPrivateKeyEl.value;
+        }
+        const payload = await api(
+          editId ? `/api/admin/ssh-credentials/${editId}` : "/api/admin/ssh-credentials",
+          {
+            method: editId ? "PATCH" : "POST",
+            body: JSON.stringify(body),
+          }
+        );
+        setOperationStatus(`Saved SSH credential ${payload.sshCredential.name}.`);
+        delete saveSshCredentialButtonEl.dataset.editId;
+        sshCredentialNameEl.value = "";
+        sshCredentialUsernameEl.value = "";
+        sshCredentialPrivateKeyEl.value = "";
+        sshCredentialPrivateKeyEl.placeholder = "-----BEGIN OPENSSH PRIVATE KEY-----";
+        sshCredentialPassphraseEl.value = "";
+        await loadSshData();
+      }
+
+      async function saveSshProfile() {
+        const editId = saveSshProfileButtonEl.dataset.editId;
+        const payload = await api(
+          editId ? `/api/admin/ssh-profiles/${editId}` : "/api/admin/ssh-profiles",
+          {
+            method: editId ? "PATCH" : "POST",
+            body: JSON.stringify({
+              name: sshProfileNameEl.value,
+              hostId: sshProfileHostEl.value,
+              credentialId: sshProfileCredentialEl.value,
+              shell: sshProfileShellEl.value,
+              enabled: sshProfileEnabledEl.checked,
+            }),
+          }
+        );
+        setOperationStatus(`Saved SSH profile ${payload.sshProfile.name}.`);
+        delete saveSshProfileButtonEl.dataset.editId;
+        sshProfileNameEl.value = "";
+        sshProfileShellEl.value = "";
+        sshProfileEnabledEl.checked = true;
+        await loadSshData();
+      }
+
+      async function deleteSshResource(resource, id) {
+        if (!window.confirm(`Delete ${resource} record?`)) {
+          return;
+        }
+        await api(`/api/admin/${resource}/${id}`, { method: "DELETE" });
+        setOperationStatus(`Deleted ${resource} record.`);
+        await loadSshData();
+      }
+
       async function saveProvider(providerId) {
         const card = providerListEl.querySelector(`[data-provider-id="${providerId}"]`);
 
@@ -595,12 +931,14 @@
         adminAppEl.classList.remove("hidden");
         await loadProviders();
         await loadSessions();
+        await loadSshData();
         setOperationStatus("Admin console ready.");
       }
 
       reloadButtonEl.addEventListener("click", async () => {
         await loadProviders();
         await loadSessions();
+        await loadSshData();
         setOperationStatus("Admin data reloaded.");
       });
       cleanupButtonEl.addEventListener("click", async () => { await runCleanup(); });
@@ -609,6 +947,9 @@
       backToAppButtonEl.addEventListener("click", () => { window.location.href = "/"; });
       openImagesButtonEl.addEventListener("click", () => { window.location.href = "/images"; });
       goToAppButtonEl.addEventListener("click", () => { window.location.href = "/"; });
+      saveSshHostButtonEl.addEventListener("click", async () => { await saveSshHost(); });
+      saveSshCredentialButtonEl.addEventListener("click", async () => { await saveSshCredential(); });
+      saveSshProfileButtonEl.addEventListener("click", async () => { await saveSshProfile(); });
 
       initialize().catch((error) => {
         authWarningEl.classList.remove("hidden");

@@ -7,6 +7,8 @@ const authServiceUrl = process.env.AUTH_SERVICE_URL || "http://localhost:8081";
 const dataServiceUrl = process.env.DATA_SERVICE_URL || "http://localhost:8083";
 const workspaceServiceUrl =
   process.env.WORKSPACE_SERVICE_URL || "http://localhost:8082";
+const terminalServiceUrl =
+  process.env.TERMINAL_SERVICE_URL || "http://localhost:8084";
 const publicBaseUrl = process.env.PUBLIC_BASE_URL || "http://localhost:8080";
 const clientDir = path.resolve(__dirname, "../../../web/client");
 
@@ -242,6 +244,7 @@ const server = http.createServer(async (req, res) => {
         authServiceUrl,
         dataServiceUrl,
         workspaceServiceUrl,
+        terminalServiceUrl,
         publicBaseUrl,
       },
     });
@@ -582,6 +585,38 @@ const server = http.createServer(async (req, res) => {
         dataServiceUrl,
         req.url.replace("/api/admin", "/v1/platform"),
         "PATCH",
+        body
+      );
+      json(res, response.statusCode, response.payload);
+    } catch (error) {
+      json(res, 502, {
+        error: "Data service unavailable",
+        detail: error.message,
+      });
+    }
+    return;
+  }
+
+  if (
+    req.url.startsWith("/api/admin/ssh-hosts") ||
+    req.url.startsWith("/api/admin/ssh-credentials") ||
+    req.url.startsWith("/api/admin/ssh-profiles")
+  ) {
+    const payload = decodeBearerPayload(req.headers.authorization || "");
+
+    if (!isAdminPayload(payload)) {
+      json(res, 403, { error: "Admin access required" });
+      return;
+    }
+
+    try {
+      const body = ["POST", "PATCH"].includes(req.method)
+        ? await readRequestBody(req)
+        : "";
+      const response = await forwardJson(
+        dataServiceUrl,
+        req.url.replace("/api/admin", "/v1/platform"),
+        req.method,
         body
       );
       json(res, response.statusCode, response.payload);
@@ -953,6 +988,148 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === "GET" && req.url.startsWith("/terminal/")) {
+    const sessionId = req.url.split("/").filter(Boolean)[1] || "";
+    const escapedSessionId = sessionId.replace(/[<>&"']/g, "");
+    const html = `<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SSH Terminal ${escapedSessionId}</title>
+    <style>
+      :root { color-scheme: dark; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background: #050b12;
+        color: #d7fbe8;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        display: grid;
+        grid-template-rows: auto 1fr auto;
+      }
+      header {
+        padding: 0.8rem 1rem;
+        background: #0e1c2e;
+        border-bottom: 1px solid rgba(215, 251, 232, 0.16);
+      }
+      header strong { display: block; }
+      header span { color: #8fa8bc; font-size: 0.88rem; }
+      #terminal {
+        margin: 0;
+        padding: 1rem;
+        overflow: auto;
+        white-space: pre-wrap;
+        word-break: break-word;
+        outline: none;
+      }
+      footer {
+        display: flex;
+        gap: 0.75rem;
+        padding: 0.75rem;
+        background: #0e1c2e;
+        border-top: 1px solid rgba(215, 251, 232, 0.16);
+      }
+      input {
+        flex: 1;
+        border: 1px solid rgba(215, 251, 232, 0.18);
+        border-radius: 10px;
+        background: #07111e;
+        color: #d7fbe8;
+        padding: 0.75rem;
+        font: inherit;
+      }
+      button {
+        border: 0;
+        border-radius: 10px;
+        background: #57cc99;
+        color: #061017;
+        padding: 0.75rem 1rem;
+        font-weight: 700;
+        cursor: pointer;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <strong>SSH Terminal</strong>
+      <span>Session ${escapedSessionId}</span>
+    </header>
+    <pre id="terminal" tabindex="0">Connecting...</pre>
+    <footer>
+      <input id="commandInput" autocomplete="off" spellcheck="false" autofocus placeholder="Type command input. Press Enter to send." />
+      <button id="sendButton" type="button">Send</button>
+    </footer>
+    <script>
+      const terminalEl = document.getElementById("terminal");
+      const inputEl = document.getElementById("commandInput");
+      const sendButtonEl = document.getElementById("sendButton");
+      const token = localStorage.getItem("virtualworkstation.token") || "";
+      const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+      const socket = new WebSocket(
+        protocol + "//" + window.location.host + "/terminal-ws/${escapedSessionId}?token=" + encodeURIComponent(token)
+      );
+
+      function append(text) {
+        terminalEl.textContent += text;
+        terminalEl.scrollTop = terminalEl.scrollHeight;
+      }
+
+      function send(data) {
+        if (socket.readyState === WebSocket.OPEN) {
+          socket.send(JSON.stringify({ type: "input", data }));
+        }
+      }
+
+      socket.addEventListener("open", () => {
+        terminalEl.textContent = "";
+      });
+
+      socket.addEventListener("message", (event) => {
+        const payload = JSON.parse(event.data);
+        if (payload.type === "status") {
+          append("\\n[" + payload.data + "]\\n");
+        }
+        if (payload.type === "output") {
+          append(payload.data);
+        }
+      });
+
+      socket.addEventListener("close", () => {
+        append("\\n[Terminal disconnected.]\\n");
+      });
+
+      socket.addEventListener("error", () => {
+        append("\\n[Terminal connection error.]\\n");
+      });
+
+      sendButtonEl.addEventListener("click", () => {
+        send(inputEl.value + "\\n");
+        inputEl.value = "";
+        inputEl.focus();
+      });
+
+      inputEl.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          sendButtonEl.click();
+        }
+      });
+
+      document.addEventListener("keydown", (event) => {
+        if (event.ctrlKey && event.key.toLowerCase() === "c") {
+          event.preventDefault();
+          send("\\x03");
+        }
+      });
+    </script>
+  </body>
+</html>`;
+    res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+    res.end(html);
+    return;
+  }
+
   const requestedPath =
     req.url === "/"
       ? "/index.html"
@@ -973,4 +1150,57 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(port, () => {
   console.log(`api-gateway listening on ${port}`);
+});
+
+server.on("upgrade", (req, socket, head) => {
+  if (!req.url || !req.url.startsWith("/terminal-ws/")) {
+    socket.destroy();
+    return;
+  }
+
+  const targetBase = new URL(terminalServiceUrl);
+  const targetPath = req.url.replace("/terminal-ws/", "/v1/terminal-ws/");
+  const proxyRequest = http.request({
+    hostname: targetBase.hostname,
+    port: targetBase.port || 80,
+    path: targetPath,
+    method: "GET",
+    headers: req.headers,
+  });
+
+  proxyRequest.on("upgrade", (proxyResponse, proxySocket, proxyHead) => {
+    socket.write(
+      [
+        "HTTP/1.1 101 Switching Protocols",
+        "Upgrade: websocket",
+        "Connection: Upgrade",
+        `Sec-WebSocket-Accept: ${proxyResponse.headers["sec-websocket-accept"]}`,
+        "\r\n",
+      ].join("\r\n")
+    );
+
+    if (proxyHead && proxyHead.length) {
+      socket.write(proxyHead);
+    }
+    if (head && head.length) {
+      proxySocket.write(head);
+    }
+
+    proxySocket.pipe(socket);
+    socket.pipe(proxySocket);
+  });
+
+  proxyRequest.on("response", (proxyResponse) => {
+    socket.write(
+      `HTTP/1.1 ${proxyResponse.statusCode || 502} ${proxyResponse.statusMessage || "Bad Gateway"}\r\nConnection: close\r\n\r\n`
+    );
+    socket.destroy();
+  });
+
+  proxyRequest.on("error", () => {
+    socket.write("HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n");
+    socket.destroy();
+  });
+
+  proxyRequest.end();
 });

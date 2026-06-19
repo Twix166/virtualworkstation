@@ -13,6 +13,12 @@
       "name": "Virtual Machine",
       "kind": "virtual-machine",
       "description": "Launch a KVM-backed virtual machine through a provider plugin."
+    },
+    {
+      "id": "ssh-host",
+      "name": "SSH Host",
+      "kind": "ssh-host",
+      "description": "Open a browser-based SSH terminal to an approved network host."
     }
   ],
   "distributions": [

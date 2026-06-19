@@ -8,6 +8,7 @@ Declarative Docker-based scaffold for a microservices virtual workstation platfo
 - An auth service that issues signed bearer tokens for persisted accounts
 - A data service that persists users, profiles, and workstation session records
 - A workspace service that resolves the selected distro and interface into a real Docker runtime image per session
+- A terminal service that brokers browser-based SSH terminals to approved network hosts
 - A provider/plugin control plane for Docker and future VM-backed execution providers
 - Distro-backed XFCE desktop images exposed through noVNC in the browser
 - Distro-backed CLI terminal images exposed through `shellinabox` in the browser
@@ -22,6 +23,7 @@ Declarative Docker-based scaffold for a microservices virtual workstation platfo
 - `services/auth-service`: User authentication and token issuance
 - `services/data-service`: User/profile/session persistence
 - `services/workspace-service`: Workspace launch orchestration backed by a catalog
+- `services/terminal-service`: SSH PTY and WebSocket terminal broker
 - `web/client/admin`: Dedicated admin console for provider configuration and operations
 - `runtime-images/*/*`: Distro/interface runtime image definitions
 - `config/workspace-catalog.json`: Declarative runtime inventory
@@ -98,11 +100,12 @@ The first launch of a distro/interface combination may take longer because the w
 - Each launch creates a fresh Docker container with its own published browser endpoint.
 - The resolved runtime spec records which distro/interface image was actually used.
 - Proxmox-backed provider settings and reusable image profiles are persisted separately from session history.
+- SSH hosts, encrypted private-key credentials, and launchable SSH profiles are persisted separately from workstation sessions.
 
 ## Current Admin UX
 
 - The main application handles sign-in, launch, and user session management.
-- The admin console at `/admin` is used for provider configuration, cleanup, and platform operations.
+- The admin console at `/admin` is used for provider configuration, SSH access management, cleanup, and platform operations.
 - The image management screen at `/images` is used to:
   - review Proxmox ISO inventory
   - upload local ISOs
@@ -119,6 +122,15 @@ The first launch of a distro/interface combination may take longer because the w
 - ISO uploads now stream through the control plane instead of buffering fully in memory before Proxmox transfer.
 - Successful ISO uploads are reported complete only after the ISO is confirmed in Proxmox storage.
 - Newly uploaded ISOs are marked as `New` in the image inventory for 24 hours.
+
+## Current SSH Host Flow
+
+- SSH host access is exposed as a provider named `Managed SSH Hosts`.
+- Admins enable the SSH provider from `/admin`.
+- Admins create approved hosts, private-key credentials, and launchable SSH profiles from `/admin`.
+- Users select `SSH Host` in the launcher, choose an enabled SSH profile, and open the resulting browser terminal session.
+- Private keys stay server-side, are encrypted at rest in the data-service store, and are not returned to the browser.
+- The first SSH terminal is intentionally lightweight; richer terminal emulation and session recording remain future hardening work.
 
 ## Backlog
 
@@ -158,6 +170,7 @@ Current state:
 
 - Docker-backed container providers are implemented
 - Proxmox VM providers are configurable from the admin console and now have a working first adapter in `workspace-service`
+- Managed SSH host profiles are configurable from the admin console and launch through `terminal-service`
 - Local KVM/libvirt providers are configurable from the admin console
 - Proxmox now supports ISO-backed unattended VM provisioning, console access, and ISO lifecycle operations from the Image Management page
 - Proxmox still needs environment-specific tuning and further polish around long-running upload/install UX
@@ -165,7 +178,7 @@ Current state:
 
 ## Notes
 
-- Control-plane services use only Node.js built-ins to keep the baseline easy to inspect.
+- Most control-plane services use only Node.js built-ins; `terminal-service` adds `ssh2` and `ws` for SSH PTY streaming.
 - Authentication is deliberately minimal and not production-safe.
 - Current release notes: [v0.4.0](docs/releases/v0.4.0.md)
 

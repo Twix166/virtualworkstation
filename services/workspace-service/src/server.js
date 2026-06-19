@@ -9,6 +9,7 @@ const { execFile, spawn } = require("child_process");
 const port = Number(process.env.PORT || 8082);
 const publicBaseUrl = process.env.PUBLIC_BASE_URL || "http://localhost:8080";
 const dataServiceUrl = process.env.DATA_SERVICE_URL || "http://localhost:8083";
+const terminalServiceUrl = process.env.TERMINAL_SERVICE_URL || "http://localhost:8084";
 const authTokenSecret = process.env.AUTH_TOKEN_SECRET || "virtualworkstation-dev-secret";
 const workspaceCatalogPath =
   process.env.WORKSPACE_CATALOG_PATH ||
@@ -119,6 +120,39 @@ function isAdminIdentity(identity) {
 function forwardJson(route, method, body) {
   return new Promise((resolve, reject) => {
     const target = new URL(route, dataServiceUrl);
+    const request = http.request(
+      target,
+      {
+        method,
+        headers: {
+          "Content-Type": "application/json",
+        },
+      },
+      (response) => {
+        let responseBody = "";
+        response.on("data", (chunk) => {
+          responseBody += chunk;
+        });
+        response.on("end", () => {
+          resolve({
+            statusCode: response.statusCode || 500,
+            payload: responseBody ? JSON.parse(responseBody) : {},
+          });
+        });
+      }
+    );
+
+    request.on("error", reject);
+    if (body) {
+      request.write(body);
+    }
+    request.end();
+  });
+}
+
+function forwardTerminalJson(route, method, body) {
+  return new Promise((resolve, reject) => {
+    const target = new URL(route, terminalServiceUrl);
     const request = http.request(
       target,
       {
@@ -436,6 +470,12 @@ function defaultMachineTypes() {
       kind: "virtual-machine",
       description: "Launch a KVM-backed virtual machine through a provider plugin.",
     },
+    {
+      id: "ssh-host",
+      name: "SSH Host",
+      kind: "ssh-host",
+      description: "Open a browser-based SSH terminal to an approved network host.",
+    },
   ];
 }
 
@@ -447,6 +487,14 @@ async function listProviders() {
 async function listImageProfiles() {
   const response = await forwardJson("/v1/platform/image-profiles", "GET");
   return response.payload.imageProfiles || [];
+}
+
+async function listSshProfiles(internal = false) {
+  const route = internal
+    ? "/v1/platform/ssh-profiles/internal"
+    : "/v1/platform/ssh-profiles";
+  const response = await forwardJson(route, "GET");
+  return response.payload.sshProfiles || [];
 }
 
 async function listProviderAssets(providerId = "") {
@@ -2042,6 +2090,17 @@ async function removeSessionContainers(session) {
   }
 }
 
+async function removeTerminalSession(session) {
+  if (!session?.id) {
+    return;
+  }
+
+  await forwardTerminalJson(
+    `/v1/terminal/sessions/${encodeURIComponent(session.id)}`,
+    "DELETE"
+  ).catch(() => {});
+}
+
 async function stopProxmoxVirtualMachine(session) {
   const resource = getSessionRuntimeResource(session);
   const provider = await getProviderRecordForSession(session);
@@ -2134,6 +2193,11 @@ async function deleteProxmoxVirtualMachine(session) {
 async function stopRuntimeResource(session) {
   const providerDriver = session?.resolvedRuntimeSpec?.provider?.driver;
 
+  if (providerDriver === "ssh") {
+    await removeTerminalSession(session);
+    return;
+  }
+
   if (providerDriver === "proxmox") {
     await stopProxmoxVirtualMachine(session);
     return;
@@ -2144,6 +2208,11 @@ async function stopRuntimeResource(session) {
 
 async function deleteRuntimeResource(session) {
   const providerDriver = session?.resolvedRuntimeSpec?.provider?.driver;
+
+  if (providerDriver === "ssh") {
+    await removeTerminalSession(session);
+    return;
+  }
 
   if (providerDriver === "proxmox") {
     await deleteProxmoxVirtualMachine(session);
@@ -2476,6 +2545,7 @@ const server = http.createServer(async (req, res) => {
       const catalog = loadCatalog();
       const providers = await listProviders();
       const imageProfiles = await listImageProfiles();
+      const sshProfiles = await listSshProfiles(false);
       json(res, 200, {
         version: catalog.version || 1,
         machineTypes: catalog.machineTypes || defaultMachineTypes(),
@@ -2487,6 +2557,12 @@ const server = http.createServer(async (req, res) => {
         instanceSizes: catalog.instanceSizes || [],
         installOptions: catalog.installOptions || {},
         imageProfiles: imageProfiles.filter((entry) => entry.enabled !== false),
+        sshProfiles: sshProfiles.filter(
+          (entry) =>
+            entry.enabled !== false &&
+            entry.host?.enabled !== false &&
+            entry.credential?.hasPrivateKey
+        ),
         runtimeProfiles: catalog.runtimeProfiles || [],
         policies: {
           defaultMachineTypeId:
@@ -2927,6 +3003,7 @@ const server = http.createServer(async (req, res) => {
     const providers = await listProviders();
     const imageProfiles = await listImageProfiles();
     const providerAssets = await listProviderAssets();
+    const sshProfiles = await listSshProfiles(true);
     const selection = resolveCatalogSelections(catalog, request);
     const providerSelection = resolveProviderSelection(catalog, providers, request);
     const requestedImageProfileId = String(request.imageProfileId || "").trim();
@@ -2942,6 +3019,141 @@ const server = http.createServer(async (req, res) => {
           providerId: providerSelection.providerId,
         },
       });
+      return;
+    }
+
+    if (
+      providerSelection.machineType.id === "ssh-host" &&
+      providerSelection.provider.driver === "ssh"
+    ) {
+      const requestedSshProfileId = String(request.sshProfileId || "").trim();
+      const sshProfile = sshProfiles.find((entry) => entry.id === requestedSshProfileId) || null;
+
+      if (!sshProfile || sshProfile.enabled === false) {
+        json(res, 400, { error: "An enabled SSH profile is required" });
+        return;
+      }
+
+      if (!sshProfile.host || sshProfile.host.enabled === false) {
+        json(res, 400, { error: "Selected SSH profile host is disabled or missing" });
+        return;
+      }
+
+      if (!sshProfile.credential?.privateKey) {
+        json(res, 400, { error: "Selected SSH profile credential is missing a private key" });
+        return;
+      }
+
+      try {
+        const sessionId = crypto.randomUUID();
+        const connectionUrl = `${publicBaseUrl}/terminal/${sessionId}`;
+        const terminalResponse = await forwardTerminalJson(
+          "/v1/terminal/sessions",
+          "POST",
+          JSON.stringify({
+            id: sessionId,
+            userId: identity.sub,
+            profile: sshProfile,
+          })
+        );
+
+        if (terminalResponse.statusCode !== 201) {
+          json(res, 502, {
+            error: "Unable to create SSH terminal session",
+            detail: terminalResponse.payload,
+          });
+          return;
+        }
+
+        const createSessionResponse = await forwardJson(
+          "/v1/sessions",
+          "POST",
+          JSON.stringify({
+            id: sessionId,
+            userId: identity.sub,
+            desktopEnvironment: "ssh",
+            distributionId: null,
+            interfaceId: "ssh",
+            instanceSizeId: null,
+            machineTypeId: providerSelection.machineType.id,
+            providerId: providerSelection.provider.id,
+            profileId: sshProfile.id,
+            state: "ready",
+            statusDetail: `SSH terminal ready for ${sshProfile.host.name}.`,
+            connection: {
+              type: "ssh-terminal",
+              url: connectionUrl,
+            },
+            resolvedRuntimeSpec: {
+              profileId: sshProfile.id,
+              machineTypeId: providerSelection.machineType.id,
+              provider: {
+                id: providerSelection.provider.id,
+                name: providerSelection.provider.name,
+                driver: providerSelection.provider.driver,
+                kind: providerSelection.provider.kind,
+                scope: providerSelection.provider.scope,
+              },
+              sshProfile: {
+                id: sshProfile.id,
+                name: sshProfile.name,
+                host: {
+                  id: sshProfile.host.id,
+                  name: sshProfile.host.name,
+                  hostname: sshProfile.host.hostname,
+                  port: sshProfile.host.port,
+                },
+                username: sshProfile.credential.username,
+                shell: sshProfile.shell || "",
+              },
+            },
+            lifecycleCapabilities: {
+              stop: true,
+              restart: false,
+              hibernate: false,
+              resume: false,
+            },
+          })
+        );
+
+        if (createSessionResponse.statusCode !== 201) {
+          await removeTerminalSession({ id: sessionId });
+          json(res, 502, {
+            error: "Unable to persist SSH session",
+            detail: createSessionResponse.payload,
+          });
+          return;
+        }
+
+        json(res, 202, {
+          sessionId,
+          state: "ready",
+          statusDetail: `SSH terminal ready for ${sshProfile.host.name}.`,
+          distributionId: null,
+          interfaceId: "ssh",
+          instanceSizeId: null,
+          machineTypeId: providerSelection.machineType.id,
+          providerId: providerSelection.provider.id,
+          sshProfileId: sshProfile.id,
+          desktopEnvironment: "ssh",
+          connection: {
+            type: "ssh-terminal",
+            url: connectionUrl,
+          },
+          runtimePlan: {
+            profileId: sshProfile.id,
+            protocol: "ssh",
+            machineType: providerSelection.machineType,
+            provider: sanitizeProviderRecord(providerSelection.provider),
+            launchOrigin: publicBaseUrl,
+          },
+        });
+      } catch (error) {
+        json(res, 502, {
+          error: "Unable to create SSH terminal session",
+          detail: error.message,
+        });
+      }
       return;
     }
 

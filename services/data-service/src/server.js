@@ -5,6 +5,10 @@ const crypto = require("crypto");
 
 const port = Number(process.env.PORT || 8083);
 const dataFilePath = process.env.DATA_FILE_PATH || "/tmp/virtualworkstation-db.json";
+const dataEncryptionSecret =
+  process.env.DATA_ENCRYPTION_SECRET ||
+  process.env.AUTH_TOKEN_SECRET ||
+  "virtualworkstation-dev-secret";
 
 function json(res, statusCode, payload) {
   res.writeHead(statusCode, { "Content-Type": "application/json" });
@@ -48,6 +52,9 @@ function ensureDatabase() {
         events: [],
         providerAssets: [],
         imageProfiles: [],
+        sshHosts: [],
+        sshCredentials: [],
+        sshProfiles: [],
       },
       sessions: [],
     };
@@ -57,6 +64,28 @@ function ensureDatabase() {
 
 function defaultProviders() {
   return [
+    {
+      id: "ssh-host-provider",
+      name: "Managed SSH Hosts",
+      kind: "ssh-host",
+      driver: "ssh",
+      enabled: false,
+      default: false,
+      scope: "remote",
+      description: "Open browser-based SSH terminal sessions to approved network hosts.",
+      capabilities: {
+        machineTypes: ["ssh-host"],
+        supportsImages: false,
+        supportsImageBuilder: false,
+        supportsVirtualMachines: false,
+        supportsSuspend: false,
+        supportsSshTerminal: true,
+      },
+      config: {
+        idleTimeoutMinutes: 30,
+        allowArbitraryHosts: false,
+      },
+    },
     {
       id: "docker-local",
       name: "Local Docker Engine",
@@ -161,6 +190,43 @@ function writeDatabase(database) {
   fs.writeFileSync(dataFilePath, JSON.stringify(database, null, 2));
 }
 
+function encryptionKey() {
+  return crypto.createHash("sha256").update(dataEncryptionSecret).digest();
+}
+
+function encryptSecret(value) {
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv("aes-256-gcm", encryptionKey(), iv);
+  const ciphertext = Buffer.concat([cipher.update(String(value), "utf8"), cipher.final()]);
+
+  return {
+    privateKeyCiphertext: ciphertext.toString("base64"),
+    privateKeyIv: iv.toString("base64"),
+    privateKeyTag: cipher.getAuthTag().toString("base64"),
+  };
+}
+
+function decryptSecret(record) {
+  if (!record?.privateKeyCiphertext || !record?.privateKeyIv || !record?.privateKeyTag) {
+    return record?.privateKey || "";
+  }
+
+  const decipher = crypto.createDecipheriv(
+    "aes-256-gcm",
+    encryptionKey(),
+    Buffer.from(record.privateKeyIv, "base64")
+  );
+  decipher.setAuthTag(Buffer.from(record.privateKeyTag, "base64"));
+  return Buffer.concat([
+    decipher.update(Buffer.from(record.privateKeyCiphertext, "base64")),
+    decipher.final(),
+  ]).toString("utf8");
+}
+
+function hasPrivateKey(record) {
+  return Boolean(record?.privateKey || record?.privateKeyCiphertext);
+}
+
 function sanitizeUser(user) {
   return {
     id: user.id,
@@ -171,7 +237,15 @@ function sanitizeUser(user) {
 
 function ensurePlatformShape(database) {
   if (!database.platform) {
-    database.platform = { providers: [], events: [], providerAssets: [], imageProfiles: [] };
+    database.platform = {
+      providers: [],
+      events: [],
+      providerAssets: [],
+      imageProfiles: [],
+      sshHosts: [],
+      sshCredentials: [],
+      sshProfiles: [],
+    };
   }
 
   if (!Array.isArray(database.platform.providers)) {
@@ -188,6 +262,18 @@ function ensurePlatformShape(database) {
 
   if (!Array.isArray(database.platform.imageProfiles)) {
     database.platform.imageProfiles = [];
+  }
+
+  if (!Array.isArray(database.platform.sshHosts)) {
+    database.platform.sshHosts = [];
+  }
+
+  if (!Array.isArray(database.platform.sshCredentials)) {
+    database.platform.sshCredentials = [];
+  }
+
+  if (!Array.isArray(database.platform.sshProfiles)) {
+    database.platform.sshProfiles = [];
   }
 
   if (database.platform.providers.length === 0) {
@@ -279,6 +365,59 @@ function sanitizeProviderAsset(asset) {
     metadata: asset.metadata || null,
     createdAt: asset.createdAt,
     updatedAt: asset.updatedAt,
+  };
+}
+
+function sanitizeSshHost(host) {
+  return {
+    id: host.id,
+    name: host.name,
+    hostname: host.hostname,
+    port: Number(host.port || 22),
+    enabled: host.enabled !== false,
+    tags: Array.isArray(host.tags) ? host.tags : [],
+    createdAt: host.createdAt,
+    updatedAt: host.updatedAt,
+  };
+}
+
+function sanitizeSshCredential(credential) {
+  return {
+    id: credential.id,
+    name: credential.name,
+    username: credential.username,
+    authType: credential.authType || "private-key",
+    hasPrivateKey: hasPrivateKey(credential),
+    hasPassphrase: Boolean(credential.passphrase),
+    createdAt: credential.createdAt,
+    updatedAt: credential.updatedAt,
+  };
+}
+
+function sanitizeSshProfile(profile) {
+  return {
+    id: profile.id,
+    name: profile.name,
+    description: profile.description || "",
+    hostId: profile.hostId,
+    credentialId: profile.credentialId,
+    shell: profile.shell || "",
+    enabled: profile.enabled !== false,
+    createdAt: profile.createdAt,
+    updatedAt: profile.updatedAt,
+  };
+}
+
+function sanitizeSshProfileForLaunch(profile, database) {
+  const host = database.platform.sshHosts.find((entry) => entry.id === profile.hostId);
+  const credential = database.platform.sshCredentials.find(
+    (entry) => entry.id === profile.credentialId
+  );
+
+  return {
+    ...sanitizeSshProfile(profile),
+    host: host ? sanitizeSshHost(host) : null,
+    credential: credential ? sanitizeSshCredential(credential) : null,
   };
 }
 
@@ -695,6 +834,310 @@ const server = http.createServer(async (req, res) => {
     json(res, 201, {
       event: database.platform.events[0],
     });
+    return;
+  }
+
+  if (req.method === "GET" && requestUrl.pathname === "/v1/platform/ssh-hosts") {
+    const database = readDatabase();
+    ensurePlatformShape(database);
+    json(res, 200, {
+      sshHosts: database.platform.sshHosts.map(sanitizeSshHost),
+    });
+    return;
+  }
+
+  if (req.method === "POST" && requestUrl.pathname === "/v1/platform/ssh-hosts") {
+    const body = await readRequestBody(req);
+    const request = body ? JSON.parse(body) : {};
+    const database = readDatabase();
+    ensurePlatformShape(database);
+    const name = String(request.name || "").trim();
+    const hostname = String(request.hostname || "").trim();
+
+    if (!name || !hostname) {
+      json(res, 400, { error: "name and hostname are required" });
+      return;
+    }
+
+    const host = {
+      id: request.id || crypto.randomUUID(),
+      name,
+      hostname,
+      port: Number(request.port || 22),
+      enabled: request.enabled !== false,
+      tags: Array.isArray(request.tags)
+        ? request.tags.map((entry) => String(entry).trim()).filter(Boolean)
+        : [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    database.platform.sshHosts.push(host);
+    writeDatabase(database);
+    json(res, 201, { sshHost: sanitizeSshHost(host) });
+    return;
+  }
+
+  if (
+    (req.method === "PATCH" || req.method === "DELETE") &&
+    requestUrl.pathname.startsWith("/v1/platform/ssh-hosts/")
+  ) {
+    const hostId = requestUrl.pathname.split("/").filter(Boolean)[3];
+    const database = readDatabase();
+    ensurePlatformShape(database);
+    const hostIndex = database.platform.sshHosts.findIndex((entry) => entry.id === hostId);
+
+    if (hostIndex === -1) {
+      json(res, 404, { error: "SSH host not found" });
+      return;
+    }
+
+    if (req.method === "DELETE") {
+      const profileUsesHost = database.platform.sshProfiles.some((entry) => entry.hostId === hostId);
+      if (profileUsesHost) {
+        json(res, 409, { error: "SSH host is used by one or more profiles" });
+        return;
+      }
+      const [sshHost] = database.platform.sshHosts.splice(hostIndex, 1);
+      writeDatabase(database);
+      json(res, 200, { sshHost: sanitizeSshHost(sshHost) });
+      return;
+    }
+
+    const body = await readRequestBody(req);
+    const request = body ? JSON.parse(body) : {};
+    const host = database.platform.sshHosts[hostIndex];
+    if (request.name !== undefined) host.name = String(request.name || "").trim();
+    if (request.hostname !== undefined) host.hostname = String(request.hostname || "").trim();
+    if (request.port !== undefined) host.port = Number(request.port || 22);
+    if (request.enabled !== undefined) host.enabled = Boolean(request.enabled);
+    if (request.tags !== undefined) {
+      host.tags = Array.isArray(request.tags)
+        ? request.tags.map((entry) => String(entry).trim()).filter(Boolean)
+        : [];
+    }
+    if (!host.name || !host.hostname) {
+      json(res, 400, { error: "name and hostname are required" });
+      return;
+    }
+    host.updatedAt = new Date().toISOString();
+    writeDatabase(database);
+    json(res, 200, { sshHost: sanitizeSshHost(host) });
+    return;
+  }
+
+  if (req.method === "GET" && requestUrl.pathname === "/v1/platform/ssh-credentials") {
+    const database = readDatabase();
+    ensurePlatformShape(database);
+    json(res, 200, {
+      sshCredentials: database.platform.sshCredentials.map(sanitizeSshCredential),
+    });
+    return;
+  }
+
+  if (req.method === "POST" && requestUrl.pathname === "/v1/platform/ssh-credentials") {
+    const body = await readRequestBody(req);
+    const request = body ? JSON.parse(body) : {};
+    const database = readDatabase();
+    ensurePlatformShape(database);
+    const name = String(request.name || "").trim();
+    const username = String(request.username || "").trim();
+    const privateKey = String(request.privateKey || "").trim();
+
+    if (!name || !username || !privateKey) {
+      json(res, 400, { error: "name, username, and privateKey are required" });
+      return;
+    }
+
+    const credential = {
+      id: request.id || crypto.randomUUID(),
+      name,
+      username,
+      authType: "private-key",
+      ...encryptSecret(privateKey),
+      passphrase: request.passphrase ? String(request.passphrase) : "",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    database.platform.sshCredentials.push(credential);
+    writeDatabase(database);
+    json(res, 201, { sshCredential: sanitizeSshCredential(credential) });
+    return;
+  }
+
+  if (
+    (req.method === "PATCH" || req.method === "DELETE") &&
+    requestUrl.pathname.startsWith("/v1/platform/ssh-credentials/")
+  ) {
+    const credentialId = requestUrl.pathname.split("/").filter(Boolean)[3];
+    const database = readDatabase();
+    ensurePlatformShape(database);
+    const credentialIndex = database.platform.sshCredentials.findIndex(
+      (entry) => entry.id === credentialId
+    );
+
+    if (credentialIndex === -1) {
+      json(res, 404, { error: "SSH credential not found" });
+      return;
+    }
+
+    if (req.method === "DELETE") {
+      const profileUsesCredential = database.platform.sshProfiles.some(
+        (entry) => entry.credentialId === credentialId
+      );
+      if (profileUsesCredential) {
+        json(res, 409, { error: "SSH credential is used by one or more profiles" });
+        return;
+      }
+      const [sshCredential] = database.platform.sshCredentials.splice(credentialIndex, 1);
+      writeDatabase(database);
+      json(res, 200, { sshCredential: sanitizeSshCredential(sshCredential) });
+      return;
+    }
+
+    const body = await readRequestBody(req);
+    const request = body ? JSON.parse(body) : {};
+    const credential = database.platform.sshCredentials[credentialIndex];
+    if (request.name !== undefined) credential.name = String(request.name || "").trim();
+    if (request.username !== undefined) credential.username = String(request.username || "").trim();
+    if (request.privateKey !== undefined && String(request.privateKey || "").trim()) {
+      delete credential.privateKey;
+      Object.assign(credential, encryptSecret(String(request.privateKey).trim()));
+    }
+    if (request.passphrase !== undefined) credential.passphrase = String(request.passphrase || "");
+    if (!credential.name || !credential.username || !hasPrivateKey(credential)) {
+      json(res, 400, { error: "name, username, and privateKey are required" });
+      return;
+    }
+    credential.updatedAt = new Date().toISOString();
+    writeDatabase(database);
+    json(res, 200, { sshCredential: sanitizeSshCredential(credential) });
+    return;
+  }
+
+  if (req.method === "GET" && requestUrl.pathname === "/v1/platform/ssh-profiles") {
+    const database = readDatabase();
+    ensurePlatformShape(database);
+    json(res, 200, {
+      sshProfiles: database.platform.sshProfiles.map((entry) =>
+        sanitizeSshProfileForLaunch(entry, database)
+      ),
+    });
+    return;
+  }
+
+  if (req.method === "GET" && requestUrl.pathname === "/v1/platform/ssh-profiles/internal") {
+    const database = readDatabase();
+    ensurePlatformShape(database);
+    json(res, 200, {
+      sshProfiles: database.platform.sshProfiles.map((profile) => ({
+        ...profile,
+        host: database.platform.sshHosts.find((entry) => entry.id === profile.hostId) || null,
+        credential: (() => {
+          const credential =
+            database.platform.sshCredentials.find((entry) => entry.id === profile.credentialId) ||
+            null;
+          return credential
+            ? {
+                ...credential,
+                privateKey: decryptSecret(credential),
+              }
+            : null;
+        })(),
+      })),
+    });
+    return;
+  }
+
+  if (req.method === "POST" && requestUrl.pathname === "/v1/platform/ssh-profiles") {
+    const body = await readRequestBody(req);
+    const request = body ? JSON.parse(body) : {};
+    const database = readDatabase();
+    ensurePlatformShape(database);
+    const name = String(request.name || "").trim();
+    const hostId = String(request.hostId || "").trim();
+    const credentialId = String(request.credentialId || "").trim();
+
+    if (!name || !hostId || !credentialId) {
+      json(res, 400, { error: "name, hostId, and credentialId are required" });
+      return;
+    }
+
+    if (!database.platform.sshHosts.some((entry) => entry.id === hostId)) {
+      json(res, 400, { error: "hostId does not reference an SSH host" });
+      return;
+    }
+
+    if (!database.platform.sshCredentials.some((entry) => entry.id === credentialId)) {
+      json(res, 400, { error: "credentialId does not reference an SSH credential" });
+      return;
+    }
+
+    const profile = {
+      id: request.id || crypto.randomUUID(),
+      name,
+      description: String(request.description || "").trim(),
+      hostId,
+      credentialId,
+      shell: String(request.shell || "").trim(),
+      enabled: request.enabled !== false,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    database.platform.sshProfiles.push(profile);
+    writeDatabase(database);
+    json(res, 201, { sshProfile: sanitizeSshProfileForLaunch(profile, database) });
+    return;
+  }
+
+  if (
+    (req.method === "PATCH" || req.method === "DELETE") &&
+    requestUrl.pathname.startsWith("/v1/platform/ssh-profiles/")
+  ) {
+    const profileId = requestUrl.pathname.split("/").filter(Boolean)[3];
+    const database = readDatabase();
+    ensurePlatformShape(database);
+    const profileIndex = database.platform.sshProfiles.findIndex((entry) => entry.id === profileId);
+
+    if (profileIndex === -1) {
+      json(res, 404, { error: "SSH profile not found" });
+      return;
+    }
+
+    if (req.method === "DELETE") {
+      const [sshProfile] = database.platform.sshProfiles.splice(profileIndex, 1);
+      writeDatabase(database);
+      json(res, 200, { sshProfile: sanitizeSshProfileForLaunch(sshProfile, database) });
+      return;
+    }
+
+    const body = await readRequestBody(req);
+    const request = body ? JSON.parse(body) : {};
+    const profile = database.platform.sshProfiles[profileIndex];
+    if (request.name !== undefined) profile.name = String(request.name || "").trim();
+    if (request.description !== undefined) {
+      profile.description = String(request.description || "").trim();
+    }
+    if (request.hostId !== undefined) profile.hostId = String(request.hostId || "").trim();
+    if (request.credentialId !== undefined) {
+      profile.credentialId = String(request.credentialId || "").trim();
+    }
+    if (request.shell !== undefined) profile.shell = String(request.shell || "").trim();
+    if (request.enabled !== undefined) profile.enabled = Boolean(request.enabled);
+    if (!profile.name || !profile.hostId || !profile.credentialId) {
+      json(res, 400, { error: "name, hostId, and credentialId are required" });
+      return;
+    }
+    if (!database.platform.sshHosts.some((entry) => entry.id === profile.hostId)) {
+      json(res, 400, { error: "hostId does not reference an SSH host" });
+      return;
+    }
+    if (!database.platform.sshCredentials.some((entry) => entry.id === profile.credentialId)) {
+      json(res, 400, { error: "credentialId does not reference an SSH credential" });
+      return;
+    }
+    profile.updatedAt = new Date().toISOString();
+    writeDatabase(database);
+    json(res, 200, { sshProfile: sanitizeSshProfileForLaunch(profile, database) });
     return;
   }
 
