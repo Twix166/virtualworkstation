@@ -449,6 +449,31 @@ async function listImageProfiles() {
   return response.payload.imageProfiles || [];
 }
 
+async function listProviderAssets(providerId = "") {
+  const route = providerId
+    ? `/v1/platform/provider-assets?providerId=${encodeURIComponent(providerId)}`
+    : "/v1/platform/provider-assets";
+  const response = await forwardJson(route, "GET");
+  return response.payload.providerAssets || [];
+}
+
+async function upsertProviderAsset(asset) {
+  const response = await forwardJson(
+    "/v1/platform/provider-assets/upsert",
+    "POST",
+    JSON.stringify(asset)
+  );
+  return response.payload.providerAsset || null;
+}
+
+async function deleteProviderAsset(assetId) {
+  const response = await forwardJson(
+    `/v1/platform/provider-assets/${encodeURIComponent(assetId)}`,
+    "DELETE"
+  );
+  return response.payload.providerAsset || null;
+}
+
 async function getProviderRecordForSession(session) {
   const providers = await listProviders();
   const providerId = session?.providerId || session?.resolvedRuntimeSpec?.provider?.id;
@@ -496,6 +521,106 @@ function getProviderBoolean(provider, key, fallback = false) {
 function sanitizeImportFilename(filename, fallback = "image.iso") {
   const safe = path.basename(String(filename || "").trim()).replace(/[^a-zA-Z0-9._-]/g, "-");
   return safe || fallback;
+}
+
+function detectDistributionFromAssetName(name) {
+  const filename = String(name || "").toLowerCase();
+
+  if (/xubuntu[-_. ]?24\.04/.test(filename)) {
+    return {
+      distributionId: "xubuntu-24.04",
+      family: "ubuntu",
+      strategyId: "autoinstall",
+      confidence: "high",
+    };
+  }
+
+  if (/ubuntu[-_. ]?24\.04/.test(filename)) {
+    return {
+      distributionId: "ubuntu-24.04",
+      family: "ubuntu",
+      strategyId: "autoinstall",
+      confidence: "high",
+    };
+  }
+
+  if (/debian[-_. ]?12|bookworm/.test(filename)) {
+    return {
+      distributionId: "debian-12",
+      family: "debian",
+      strategyId: "preseed",
+      confidence: "high",
+    };
+  }
+
+  if (/fedora/.test(filename)) {
+    return {
+      distributionId: null,
+      family: "fedora",
+      strategyId: "kickstart",
+      confidence: "medium",
+    };
+  }
+
+  return {
+    distributionId: null,
+    family: null,
+    strategyId: "manual",
+    confidence: "low",
+  };
+}
+
+function buildProxmoxIsoAssetPayload(provider, image, sourceKind = "provider-inventory") {
+  const filename =
+    sanitizeImportFilename(String(image?.volid || "").split("/").pop() || image?.filename || "image.iso");
+  const detection = detectDistributionFromAssetName(filename);
+
+  return {
+    providerId: provider.id,
+    assetType: "installer-iso",
+    name: filename,
+    state: "ready",
+    source: {
+      kind: sourceKind,
+      filename,
+      volid: image?.volid || "",
+      storage: image?.storage || getProviderConfigValue(provider, "isoStorage") || "local",
+      size: image?.size || 0,
+      ctime: image?.ctime || 0,
+      format: image?.format || "iso",
+    },
+    detected: detection,
+    metadata: {
+      label: filename,
+    },
+  };
+}
+
+async function syncProxmoxIsoAssets(provider, images, sourceKind = "provider-inventory") {
+  const providerAssets = await listProviderAssets(provider.id);
+  const byVolid = new Map(
+    providerAssets
+      .filter((entry) => entry.assetType === "installer-iso" && entry.source?.volid)
+      .map((entry) => [String(entry.source.volid), entry])
+  );
+  const synced = [];
+
+  for (const image of images.filter((entry) => entry.content === "iso")) {
+    const payload = buildProxmoxIsoAssetPayload(provider, image, sourceKind);
+    const existing = byVolid.get(String(image.volid || ""));
+    const asset = await upsertProviderAsset({
+      ...(existing ? { id: existing.id } : {}),
+      ...payload,
+    });
+    synced.push({
+      ...image,
+      assetId: asset?.id || existing?.id || null,
+      asset,
+      detected: asset?.detected || existing?.detected || payload.detected,
+    });
+  }
+
+  return synced;
 }
 
 async function fetchRemoteFileBuffer(url) {
@@ -871,11 +996,16 @@ async function listProxmoxStorageContent(provider, node, storage) {
 async function resolveProxmoxInstallerIsoVolid(provider, runtimeSpec) {
   const node = getProviderConfigValue(provider, "node");
   const isoStorage = getProviderConfigValue(provider, "isoStorage") || "local";
+  const imageProfileAssetVolid = runtimeSpec?.imageProfile?.asset?.source?.volid;
   const imageProfileVolid = runtimeSpec?.imageProfile?.installerIsoVolid;
   const configuredVolid = getProviderConfigValue(provider, "installerIsoVolid");
 
   if (!node) {
     throw new Error("Proxmox provider is missing node");
+  }
+
+  if (imageProfileAssetVolid) {
+    return imageProfileAssetVolid;
   }
 
   if (imageProfileVolid) {
@@ -2395,9 +2525,10 @@ const server = http.createServer(async (req, res) => {
       const node = getProviderConfigValue(provider, "node");
       const isoStorage = getProviderConfigValue(provider, "isoStorage") || "local";
       const images = await listProxmoxStorageContent(provider, node, isoStorage);
+      const syncedImages = await syncProxmoxIsoAssets(provider, images);
 
       json(res, 200, {
-        images: images.filter((entry) => entry.content === "iso"),
+        images: syncedImages,
       });
     } catch (error) {
       json(res, 502, {
@@ -2442,6 +2573,19 @@ const server = http.createServer(async (req, res) => {
       );
       const fileBuffer = await fetchRemoteFileBuffer(sourceUrl);
       const result = await uploadBufferToProxmoxIsoAndWait(provider, filename, fileBuffer);
+      const providerAsset = await upsertProviderAsset(
+        buildProxmoxIsoAssetPayload(
+          provider,
+          {
+            volid: result.volid,
+            storage: getProviderConfigValue(provider, "isoStorage") || "local",
+            size: fileBuffer.length,
+            ctime: Math.floor(Date.now() / 1000),
+            format: "iso",
+          },
+          "import-url"
+        )
+      );
 
       json(res, 201, {
         result: {
@@ -2449,6 +2593,7 @@ const server = http.createServer(async (req, res) => {
           filename: result.filename,
           volid: result.volid,
           upid: result.upid,
+          assetId: providerAsset?.id || null,
         },
       });
     } catch (error) {
@@ -2501,6 +2646,19 @@ const server = http.createServer(async (req, res) => {
       } finally {
         await fs.promises.unlink(streamedUpload.tempPath).catch(() => {});
       }
+      const providerAsset = await upsertProviderAsset(
+        buildProxmoxIsoAssetPayload(
+          provider,
+          {
+            volid: result.volid,
+            storage: getProviderConfigValue(provider, "isoStorage") || "local",
+            size: streamedUpload.byteLength,
+            ctime: Math.floor(Date.now() / 1000),
+            format: "iso",
+          },
+          "upload"
+        )
+      );
 
       json(res, 201, {
         result: {
@@ -2508,6 +2666,7 @@ const server = http.createServer(async (req, res) => {
           filename: result.filename,
           volid: result.volid,
           upid: result.upid,
+          assetId: providerAsset?.id || null,
         },
       });
     } catch (error) {
@@ -2546,12 +2705,20 @@ const server = http.createServer(async (req, res) => {
       }
 
       const result = await deleteProxmoxIsoAndWait(provider, volid);
+      const providerAssets = await listProviderAssets(provider.id);
+      const providerAsset = providerAssets.find(
+        (entry) => entry.assetType === "installer-iso" && entry.source?.volid === volid
+      );
+      if (providerAsset?.id) {
+        await deleteProviderAsset(providerAsset.id);
+      }
 
       json(res, 200, {
         result: {
           action: "delete-file",
           volid: result.volid,
           upid: result.upid,
+          assetId: providerAsset?.id || null,
         },
       });
     } catch (error) {
@@ -2759,10 +2926,11 @@ const server = http.createServer(async (req, res) => {
     const catalog = loadCatalog();
     const providers = await listProviders();
     const imageProfiles = await listImageProfiles();
+    const providerAssets = await listProviderAssets();
     const selection = resolveCatalogSelections(catalog, request);
     const providerSelection = resolveProviderSelection(catalog, providers, request);
     const requestedImageProfileId = String(request.imageProfileId || "").trim();
-    const imageProfile = requestedImageProfileId
+    let imageProfile = requestedImageProfileId
       ? imageProfiles.find((entry) => entry.id === requestedImageProfileId) || null
       : null;
 
@@ -2794,6 +2962,28 @@ const server = http.createServer(async (req, res) => {
         },
       });
       return;
+    }
+
+    if (imageProfile) {
+      if (
+        imageProfile.providerId &&
+        imageProfile.providerId !== providerSelection.provider.id
+      ) {
+        json(res, 400, { error: "Selected image profile is not valid for this provider" });
+        return;
+      }
+
+      if (imageProfile.assetId) {
+        const asset = providerAssets.find((entry) => entry.id === imageProfile.assetId) || null;
+        if (!asset) {
+          json(res, 400, { error: "Selected image profile asset was not found" });
+          return;
+        }
+        imageProfile = {
+          ...imageProfile,
+          asset,
+        };
+      }
     }
 
     try {

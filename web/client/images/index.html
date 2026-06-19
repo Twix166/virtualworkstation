@@ -243,7 +243,14 @@
             <div class="field">
               <label for="profileProvider">Provider</label>
               <select id="profileProvider">
-                <option value="proxmox-primary">Proxmox VE</option>
+                <option value="">Loading providers...</option>
+              </select>
+            </div>
+
+            <div class="field">
+              <label for="profileAsset">Assigned asset</label>
+              <select id="profileAsset">
+                <option value="">Use provider default asset</option>
               </select>
             </div>
 
@@ -261,14 +268,6 @@
               <label for="profileDescription">Description</label>
               <textarea id="profileDescription"></textarea>
             </div>
-
-            <div class="field full">
-              <label for="profileInstallerIso">Installer ISO</label>
-              <select id="profileInstallerIso">
-                <option value="">Use provider default ISO</option>
-              </select>
-            </div>
-
             <div class="field">
               <label for="profileLocale">Locale</label>
               <select id="profileLocale"></select>
@@ -337,10 +336,10 @@
       const statusBoxEl = document.getElementById("statusBox");
       const profileNameEl = document.getElementById("profileName");
       const profileProviderEl = document.getElementById("profileProvider");
+      const profileAssetEl = document.getElementById("profileAsset");
       const profileDistributionEl = document.getElementById("profileDistribution");
       const profileInterfaceEl = document.getElementById("profileInterface");
       const profileDescriptionEl = document.getElementById("profileDescription");
-      const profileInstallerIsoEl = document.getElementById("profileInstallerIso");
       const profileLocaleEl = document.getElementById("profileLocale");
       const profileKeyboardLayoutEl = document.getElementById("profileKeyboardLayout");
       const profileTimezoneEl = document.getElementById("profileTimezone");
@@ -353,6 +352,8 @@
       let token = null;
       let currentIdentity = null;
       let catalog = null;
+      let adminProviders = [];
+      let providerAssets = [];
       let proxmoxImages = [];
       let imageProfiles = [];
       let editingProfileId = null;
@@ -426,6 +427,10 @@
       }
 
       function populateCatalogSelectors() {
+        profileProviderEl.innerHTML = (adminProviders || [])
+          .filter((entry) => entry.capabilities?.supportsImageBuilder)
+          .map((entry) => `<option value="${entry.id}">${entry.name}</option>`)
+          .join("");
         profileDistributionEl.innerHTML = (catalog?.distributions || [])
           .map((entry) => `<option value="${entry.id}">${entry.name}</option>`)
           .join("");
@@ -443,12 +448,29 @@
           .join("");
       }
 
-      function populateIsoOptions() {
-        profileInstallerIsoEl.innerHTML = [
-          `<option value="">Use provider default ISO</option>`,
-          ...proxmoxImages.map(
-            (entry) => `<option value="${entry.volid}">${entry.volid}</option>`
-          ),
+      function providerSupportsIsoAssets(providerId) {
+        const provider = adminProviders.find((entry) => entry.id === providerId);
+        return Boolean(provider?.capabilities?.supportsIsoAssets);
+      }
+
+      function getSelectedProfileAsset() {
+        return providerAssets.find((entry) => entry.id === profileAssetEl.value) || null;
+      }
+
+      function populateAssetOptions() {
+        const selectedProviderId = profileProviderEl.value || "proxmox-primary";
+        const assetsForProvider = providerAssets.filter((entry) => entry.providerId === selectedProviderId);
+        const defaultLabel = providerSupportsIsoAssets(selectedProviderId)
+          ? "Use provider default asset"
+          : "No provider asset required";
+
+        profileAssetEl.innerHTML = [
+          `<option value="">${defaultLabel}</option>`,
+          ...assetsForProvider.map((entry) => {
+            const detected = entry.detected?.distributionId || entry.detected?.family || "unknown";
+            const volid = entry.source?.volid || entry.source?.filename || "";
+            return `<option value="${entry.id}">${entry.name} (${detected})${volid ? ` - ${volid}` : ""}</option>`;
+          }),
         ].join("");
       }
 
@@ -465,9 +487,11 @@
                     <div class="meta">
                       Storage: ${entry.storage || "n/a"}<br />
                       Size: ${formatBytes(entry.size)}<br />
-                      Uploaded: ${formatTimestamp(entry.ctime)}
+                      Uploaded: ${formatTimestamp(entry.ctime)}<br />
+                      Asset: ${entry.assetId || "not registered"}
                     </div>
                     <div class="inline-actions">
+                      <button class="secondary" data-create-profile="${entry.assetId || ""}" type="button">Create Profile</button>
                       <button class="danger" data-delete-iso="${entry.volid}" type="button">Delete ISO</button>
                     </div>
                   </div>
@@ -484,6 +508,22 @@
             await deleteIso(volid);
           });
         }
+
+        for (const button of isoListEl.querySelectorAll("[data-create-profile]")) {
+          button.addEventListener("click", () => {
+            const asset = providerAssets.find((entry) => entry.id === button.dataset.createProfile);
+            if (!asset) return;
+            resetForm();
+            profileProviderEl.value = asset.providerId;
+            populateAssetOptions();
+            profileAssetEl.value = asset.id;
+            if (asset.detected?.distributionId) {
+              profileDistributionEl.value = asset.detected.distributionId;
+            }
+            profileNameEl.value = asset.name.replace(/\.iso$/i, "");
+            setStatus(`Preparing a new image profile from asset ${asset.name}.`);
+          });
+        }
       }
 
       function renderProfiles() {
@@ -495,6 +535,8 @@
                     <strong>${entry.name}</strong>
                     <div class="meta">
                       ${entry.description || "No description"}<br />
+                      Provider: ${entry.providerId || "n/a"}<br />
+                      Asset: ${entry.assetId || entry.installerIsoVolid || "Provider default"}<br />
                       ${entry.distributionId || "n/a"} / ${entry.interfaceId || "n/a"}<br />
                       ${entry.installerIsoVolid || "Provider default ISO"}<br />
                       ${entry.enabled !== false ? "Enabled" : "Disabled"}
@@ -517,10 +559,11 @@
             editorHeadingEl.textContent = `Edit ${profile.name}`;
             profileNameEl.value = profile.name || "";
             profileProviderEl.value = profile.providerId || "proxmox-primary";
+            populateAssetOptions();
+            profileAssetEl.value = profile.assetId || "";
             profileDistributionEl.value = profile.distributionId || "";
             profileInterfaceEl.value = profile.interfaceId || "";
             profileDescriptionEl.value = profile.description || "";
-            profileInstallerIsoEl.value = profile.installerIsoVolid || "";
             profileLocaleEl.value = profile.installConfig?.locale || "";
             profileKeyboardLayoutEl.value = profile.installConfig?.keyboardLayout || "";
             profileTimezoneEl.value = profile.installConfig?.timezone || "";
@@ -554,11 +597,15 @@
         editingProfileId = null;
         editorHeadingEl.textContent = "Create Image Profile";
         profileNameEl.value = "";
-        profileProviderEl.value = "proxmox-primary";
+        profileProviderEl.value =
+          adminProviders.find((entry) => entry.capabilities?.supportsIsoAssets)?.id ||
+          adminProviders.find((entry) => entry.default)?.id ||
+          "proxmox-primary";
+        populateAssetOptions();
+        profileAssetEl.value = "";
         profileDistributionEl.value = catalog?.policies?.defaultDistributionId || "";
         profileInterfaceEl.value = catalog?.policies?.defaultInterfaceId || "";
         profileDescriptionEl.value = "";
-        profileInstallerIsoEl.value = "";
         profileLocaleEl.value = catalog?.policies?.defaultInstallConfig?.locale || "";
         profileKeyboardLayoutEl.value = catalog?.policies?.defaultInstallConfig?.keyboardLayout || "";
         profileTimezoneEl.value = catalog?.policies?.defaultInstallConfig?.timezone || "";
@@ -571,6 +618,27 @@
         const response = await fetch("/api/catalog");
         catalog = await response.json();
         populateCatalogSelectors();
+      }
+
+      async function loadProviders() {
+        const response = await fetch("/api/admin/providers", {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const payload = await response.json();
+        adminProviders = payload.providers || [];
+      }
+
+      async function loadProviderAssets() {
+        const selectedProviderId = profileProviderEl.value || "proxmox-primary";
+        const response = await fetch(
+          `/api/admin/provider-assets?providerId=${encodeURIComponent(selectedProviderId)}`,
+          {
+            headers: { Authorization: `Bearer ${token}` },
+          }
+        );
+        const payload = await response.json();
+        providerAssets = payload.providerAssets || [];
+        populateAssetOptions();
       }
 
       function formatBytes(value) {
@@ -615,7 +683,6 @@
         }
 
         proxmoxImages = payload.images || [];
-        populateIsoOptions();
         renderIsoList();
 
         if (showStatus) {
@@ -649,6 +716,7 @@
 
           showUploadProgress("Refreshing Proxmox ISO inventory...", 100);
           await loadProxmoxImages();
+          await loadProviderAssets();
           setStatus(
             `Proxmox ISO import completed.\nFilename: ${payload.result?.filename || "n/a"}\nVolume: ${
               payload.result?.volid || "n/a"
@@ -717,6 +785,7 @@
           try {
             isoUploadFileEl.value = "";
             await loadProxmoxImages();
+            await loadProviderAssets();
             showUploadProgress("Upload complete.", 100, false);
             window.setTimeout(hideUploadProgress, 450);
             setStatus(
@@ -760,6 +829,7 @@
 
           showUploadProgress("Refreshing Proxmox ISO inventory...", 100);
           await loadProxmoxImages();
+          await loadProviderAssets();
           hideUploadProgress();
           setStatus(
             `Proxmox ISO removed.\nVolume: ${payload.result?.volid || volid}\nTask: ${
@@ -784,10 +854,11 @@
         const body = {
           name: profileNameEl.value,
           providerId: profileProviderEl.value,
+          assetId: profileAssetEl.value || null,
           distributionId: profileDistributionEl.value,
           interfaceId: profileInterfaceEl.value,
           description: profileDescriptionEl.value,
-          installerIsoVolid: profileInstallerIsoEl.value,
+          installerIsoVolid: getSelectedProfileAsset()?.source?.volid || "",
           enabled: profileEnabledEl.value === "true",
           installConfig: {
             locale: profileLocaleEl.value,
@@ -839,8 +910,11 @@
         }
 
         showAuthedView();
+        await loadProviders();
         await loadCatalog();
+        populateCatalogSelectors();
         await loadProxmoxImages();
+        await loadProviderAssets();
         await loadImageProfiles();
         resetForm();
         setStatus("Image management data loaded.");
@@ -863,6 +937,7 @@
           setIsoActionBusy(true);
           showUploadProgress("Refreshing Proxmox ISO inventory...", 100, true);
           await loadProxmoxImages(true);
+          await loadProviderAssets();
         } catch (error) {
           setStatus(error.message || "Unable to refresh Proxmox ISO inventory.");
         } finally {
@@ -878,6 +953,15 @@
       });
       saveProfileButtonEl.addEventListener("click", async () => {
         await saveProfile();
+      });
+      profileProviderEl.addEventListener("change", async () => {
+        await loadProviderAssets();
+      });
+      profileAssetEl.addEventListener("change", () => {
+        const asset = getSelectedProfileAsset();
+        if (asset?.detected?.distributionId) {
+          profileDistributionEl.value = asset.detected.distributionId;
+        }
       });
       resetProfileButtonEl.addEventListener("click", () => {
         resetForm();

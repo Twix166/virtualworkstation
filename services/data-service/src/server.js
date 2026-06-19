@@ -46,6 +46,7 @@ function ensureDatabase() {
       platform: {
         providers: defaultProviders(),
         events: [],
+        providerAssets: [],
         imageProfiles: [],
       },
       sessions: [],
@@ -68,8 +69,11 @@ function defaultProviders() {
       capabilities: {
         machineTypes: ["container"],
         supportsImages: true,
+        supportsImageBuilder: true,
         supportsVirtualMachines: false,
         supportsSuspend: false,
+        assetTypes: ["registry-image", "docker-build-recipe"],
+        builderTabs: ["assets", "profiles", "tests"],
       },
       config: {
         dockerHost: "unix:///var/run/docker.sock",
@@ -88,8 +92,11 @@ function defaultProviders() {
       capabilities: {
         machineTypes: ["virtual-machine"],
         supportsImages: false,
+        supportsImageBuilder: true,
         supportsVirtualMachines: true,
         supportsSuspend: true,
+        assetTypes: ["disk-image", "installer-iso", "template"],
+        builderTabs: ["assets", "profiles", "tests"],
       },
       config: {
         uri: "qemu:///system",
@@ -109,8 +116,14 @@ function defaultProviders() {
       capabilities: {
         machineTypes: ["virtual-machine"],
         supportsImages: false,
+        supportsImageBuilder: true,
         supportsVirtualMachines: true,
         supportsSuspend: true,
+        supportsIsoAssets: true,
+        supportsUnattendedInstall: true,
+        supportsBuildTests: true,
+        assetTypes: ["installer-iso"],
+        builderTabs: ["assets", "profiles", "tests"],
       },
       config: {
         apiUrl: "",
@@ -158,7 +171,7 @@ function sanitizeUser(user) {
 
 function ensurePlatformShape(database) {
   if (!database.platform) {
-    database.platform = { providers: [], events: [], imageProfiles: [] };
+    database.platform = { providers: [], events: [], providerAssets: [], imageProfiles: [] };
   }
 
   if (!Array.isArray(database.platform.providers)) {
@@ -169,12 +182,45 @@ function ensurePlatformShape(database) {
     database.platform.events = [];
   }
 
+  if (!Array.isArray(database.platform.providerAssets)) {
+    database.platform.providerAssets = [];
+  }
+
   if (!Array.isArray(database.platform.imageProfiles)) {
     database.platform.imageProfiles = [];
   }
 
   if (database.platform.providers.length === 0) {
     database.platform.providers = defaultProviders();
+    return;
+  }
+
+  const defaultsById = new Map(defaultProviders().map((entry) => [entry.id, entry]));
+  database.platform.providers = database.platform.providers.map((provider) => {
+    const defaultProvider = defaultsById.get(provider.id);
+
+    if (!defaultProvider) {
+      return provider;
+    }
+
+    return {
+      ...defaultProvider,
+      ...provider,
+      capabilities: {
+        ...(defaultProvider.capabilities || {}),
+        ...(provider.capabilities || {}),
+      },
+      config: {
+        ...(defaultProvider.config || {}),
+        ...(provider.config || {}),
+      },
+    };
+  });
+
+  for (const defaultProvider of defaultProviders()) {
+    if (!database.platform.providers.find((entry) => entry.id === defaultProvider.id)) {
+      database.platform.providers.push(defaultProvider);
+    }
   }
 }
 
@@ -221,6 +267,36 @@ function sanitizeProvider(provider) {
   };
 }
 
+function sanitizeProviderAsset(asset) {
+  return {
+    id: asset.id,
+    providerId: asset.providerId,
+    assetType: asset.assetType,
+    name: asset.name,
+    state: asset.state || "ready",
+    source: asset.source || null,
+    detected: asset.detected || null,
+    metadata: asset.metadata || null,
+    createdAt: asset.createdAt,
+    updatedAt: asset.updatedAt,
+  };
+}
+
+function findProviderAssetIndex(database, assetId) {
+  ensurePlatformShape(database);
+  return database.platform.providerAssets.findIndex((entry) => entry.id === assetId);
+}
+
+function findProviderAssetByVolid(database, providerId, volid) {
+  ensurePlatformShape(database);
+  return database.platform.providerAssets.find(
+    (entry) =>
+      entry.providerId === providerId &&
+      entry.source &&
+      String(entry.source.volid || "") === String(volid || "")
+  );
+}
+
 function findSession(database, sessionId) {
   return database.sessions.find((session) => session.id === sessionId);
 }
@@ -234,6 +310,8 @@ const server = http.createServer(async (req, res) => {
     json(res, 400, { error: "Invalid request" });
     return;
   }
+
+  const requestUrl = new URL(req.url, "http://data-service.local");
 
   if (req.method === "GET" && req.url === "/health") {
     json(res, 200, { service: "data-service", status: "ok" });
@@ -324,6 +402,157 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === "GET" && requestUrl.pathname === "/v1/platform/provider-assets") {
+    const database = readDatabase();
+    ensurePlatformShape(database);
+    const providerId = String(requestUrl.searchParams.get("providerId") || "").trim();
+    const assetType = String(requestUrl.searchParams.get("assetType") || "").trim();
+    let assets = database.platform.providerAssets.slice();
+
+    if (providerId) {
+      assets = assets.filter((entry) => entry.providerId === providerId);
+    }
+
+    if (assetType) {
+      assets = assets.filter((entry) => entry.assetType === assetType);
+    }
+
+    assets.sort((left, right) => String(right.updatedAt || "").localeCompare(String(left.updatedAt || "")));
+
+    json(res, 200, {
+      providerAssets: assets.map(sanitizeProviderAsset),
+    });
+    return;
+  }
+
+  if (req.method === "POST" && requestUrl.pathname === "/v1/platform/provider-assets/upsert") {
+    const body = await readRequestBody(req);
+    const request = body ? JSON.parse(body) : {};
+    const database = readDatabase();
+    ensurePlatformShape(database);
+
+    if (!String(request.providerId || "").trim()) {
+      json(res, 400, { error: "providerId is required" });
+      return;
+    }
+
+    if (!String(request.assetType || "").trim()) {
+      json(res, 400, { error: "assetType is required" });
+      return;
+    }
+
+    const source = request.source && typeof request.source === "object" ? request.source : {};
+    const existingById =
+      request.id && findProviderAssetIndex(database, String(request.id).trim()) !== -1
+        ? database.platform.providerAssets[findProviderAssetIndex(database, String(request.id).trim())]
+        : null;
+    const existingByVolid =
+      source.volid
+        ? findProviderAssetByVolid(database, String(request.providerId).trim(), String(source.volid).trim())
+        : null;
+    const existing = existingById || existingByVolid;
+
+    if (existing) {
+      existing.name = String(request.name || existing.name || "").trim();
+      existing.assetType = String(request.assetType || existing.assetType || "").trim();
+      existing.state = String(request.state || existing.state || "ready").trim();
+      existing.providerId = String(request.providerId || existing.providerId || "").trim();
+      existing.source = {
+        ...(existing.source || {}),
+        ...source,
+      };
+      existing.detected = request.detected && typeof request.detected === "object"
+        ? {
+            ...(existing.detected || {}),
+            ...request.detected,
+          }
+        : existing.detected || null;
+      existing.metadata = request.metadata && typeof request.metadata === "object"
+        ? {
+            ...(existing.metadata || {}),
+            ...request.metadata,
+          }
+        : existing.metadata || null;
+      existing.updatedAt = new Date().toISOString();
+      writeDatabase(database);
+      json(res, 200, { providerAsset: sanitizeProviderAsset(existing) });
+      return;
+    }
+
+    const providerAsset = {
+      id: request.id || crypto.randomUUID(),
+      providerId: String(request.providerId).trim(),
+      assetType: String(request.assetType).trim(),
+      name: String(request.name || "").trim() || String(source.filename || source.volid || "Provider Asset"),
+      state: String(request.state || "ready").trim(),
+      source,
+      detected: request.detected && typeof request.detected === "object" ? request.detected : null,
+      metadata: request.metadata && typeof request.metadata === "object" ? request.metadata : null,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    database.platform.providerAssets.push(providerAsset);
+    writeDatabase(database);
+    json(res, 201, { providerAsset: sanitizeProviderAsset(providerAsset) });
+    return;
+  }
+
+  if (
+    (req.method === "PATCH" || req.method === "DELETE") &&
+    requestUrl.pathname.startsWith("/v1/platform/provider-assets/")
+  ) {
+    const assetId = requestUrl.pathname.split("/").filter(Boolean)[3];
+    const database = readDatabase();
+    ensurePlatformShape(database);
+    const assetIndex = findProviderAssetIndex(database, assetId);
+
+    if (assetIndex === -1) {
+      json(res, 404, { error: "Provider asset not found" });
+      return;
+    }
+
+    if (req.method === "DELETE") {
+      const [providerAsset] = database.platform.providerAssets.splice(assetIndex, 1);
+      writeDatabase(database);
+      json(res, 200, { providerAsset: sanitizeProviderAsset(providerAsset) });
+      return;
+    }
+
+    const body = await readRequestBody(req);
+    const request = body ? JSON.parse(body) : {};
+    const asset = database.platform.providerAssets[assetIndex];
+
+    if (request.name !== undefined) {
+      asset.name = String(request.name || "").trim();
+    }
+    if (request.state !== undefined) {
+      asset.state = String(request.state || "ready").trim();
+    }
+    if (request.detected && typeof request.detected === "object") {
+      asset.detected = {
+        ...(asset.detected || {}),
+        ...request.detected,
+      };
+    }
+    if (request.metadata && typeof request.metadata === "object") {
+      asset.metadata = {
+        ...(asset.metadata || {}),
+        ...request.metadata,
+      };
+    }
+    if (request.source && typeof request.source === "object") {
+      asset.source = {
+        ...(asset.source || {}),
+        ...request.source,
+      };
+    }
+    asset.updatedAt = new Date().toISOString();
+    writeDatabase(database);
+    json(res, 200, { providerAsset: sanitizeProviderAsset(asset) });
+    return;
+  }
+
   if (req.method === "GET" && req.url === "/v1/platform/image-profiles") {
     const database = readDatabase();
     ensurePlatformShape(database);
@@ -349,6 +578,7 @@ const server = http.createServer(async (req, res) => {
       name: String(request.name).trim(),
       description: String(request.description || "").trim(),
       providerId: request.providerId || "proxmox-primary",
+      assetId: request.assetId || null,
       distributionId: request.distributionId || null,
       interfaceId: request.interfaceId || null,
       enabled: request.enabled !== false,
@@ -415,6 +645,10 @@ const server = http.createServer(async (req, res) => {
 
     if (request.providerId !== undefined) {
       profile.providerId = request.providerId || null;
+    }
+
+    if (request.assetId !== undefined) {
+      profile.assetId = request.assetId || null;
     }
 
     if (request.distributionId !== undefined) {

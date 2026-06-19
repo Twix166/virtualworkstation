@@ -618,6 +618,85 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === "GET" && req.url.startsWith("/api/admin/provider-assets")) {
+    const payload = decodeBearerPayload(req.headers.authorization || "");
+
+    if (!isAdminPayload(payload)) {
+      json(res, 403, { error: "Admin access required" });
+      return;
+    }
+
+    try {
+      const response = await forwardJson(
+        dataServiceUrl,
+        req.url.replace("/api/admin", "/v1/platform"),
+        "GET"
+      );
+      json(res, response.statusCode, response.payload);
+    } catch (error) {
+      json(res, 502, {
+        error: "Data service unavailable",
+        detail: error.message,
+      });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && req.url === "/api/admin/provider-assets/upsert") {
+    const payload = decodeBearerPayload(req.headers.authorization || "");
+
+    if (!isAdminPayload(payload)) {
+      json(res, 403, { error: "Admin access required" });
+      return;
+    }
+
+    try {
+      const body = await readRequestBody(req);
+      const response = await forwardJson(
+        dataServiceUrl,
+        "/v1/platform/provider-assets/upsert",
+        "POST",
+        body
+      );
+      json(res, response.statusCode, response.payload);
+    } catch (error) {
+      json(res, 502, {
+        error: "Data service unavailable",
+        detail: error.message,
+      });
+    }
+    return;
+  }
+
+  if (
+    (req.method === "PATCH" || req.method === "DELETE") &&
+    req.url.startsWith("/api/admin/provider-assets/")
+  ) {
+    const payload = decodeBearerPayload(req.headers.authorization || "");
+
+    if (!isAdminPayload(payload)) {
+      json(res, 403, { error: "Admin access required" });
+      return;
+    }
+
+    try {
+      const body = req.method === "PATCH" ? await readRequestBody(req) : "";
+      const response = await forwardJson(
+        dataServiceUrl,
+        req.url.replace("/api/admin", "/v1/platform"),
+        req.method,
+        body
+      );
+      json(res, response.statusCode, response.payload);
+    } catch (error) {
+      json(res, 502, {
+        error: "Data service unavailable",
+        detail: error.message,
+      });
+    }
+    return;
+  }
+
   if (req.method === "POST" && req.url === "/api/admin/image-profiles") {
     const payload = decodeBearerPayload(req.headers.authorization || "");
 

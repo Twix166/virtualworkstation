@@ -151,6 +151,9 @@ That design defines:
 
 The provider/plugin model is defined in [docs/provider-plugin-design.md](docs/provider-plugin-design.md).
 
+The provider-scoped image builder product/design model is defined in
+[docs/provider-image-builder-design.md](docs/provider-image-builder-design.md).
+
 Current state:
 
 - Docker-backed container providers are implemented
